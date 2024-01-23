@@ -1,6 +1,6 @@
 # Directory Structure
 
-`targets`
+`boards`
 - A set of target boards, platforms, etc
   
 `apps`

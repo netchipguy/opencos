@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 `ifndef __OCLIB_DEFINES_VH
-  `define __OCLIB_DEFINES_VH
+`define __OCLIB_DEFINES_VH
 
 // *****************************************************************************************
 // ******** UTILITY
@@ -248,7 +248,7 @@
 // ******** CODE ASSISTANCE
 // *****************************************************************************************
 
-  `define OC_CREATE_SAFE_WIDTH(m) localparam integer m``Safe = (m ? m : 1)
+  `define OC_LOCALPARAM_SAFE(m) localparam integer m``Safe = (m ? m : 1)
 
   `define OC_RAND_PERCENT(p) ((({$random}%100) < p) ? 1'b1 : 1'b0)
 
