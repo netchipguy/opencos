@@ -1,0 +1,684 @@
+#!/usr/bin/python3
+
+import time
+import subprocess
+import os
+import sys
+import shutil
+import re
+import eda_lib.util as util
+
+debug_respawn = False
+
+class Command:
+    def __init__(self, config, command_name):
+        self.args = {
+            "keep" : False,
+            "force" : False,
+            "eda-dir" : "eda.work",
+            "work-dir" : None,
+        }
+        self.modified_args = {}
+        self.config = config
+        self.command_name = command_name
+
+    def create_work_dir(self):
+        if (not os.path.exists(self.args['eda-dir'])): # use os.path.isfile / isdir also
+            os.mkdir(self.args['eda-dir'])
+        if self.args['work-dir'] == None:
+            self.args['work-dir'] = os.path.join(self.args['eda-dir'], "%s_%s" % (self.args['top'], self.command_name))
+        keep_file = os.path.join(self.args['work-dir'], "eda.keep")
+        if (os.path.exists(self.args['work-dir'])):
+            if os.path.exists(keep_file) and not self.args['force']:
+                self.error("Cannot remove old work dir due to '%s'" % (keep_file))
+            util.info("Removing previous '%s'" % (self.args['work-dir']))
+            shutil.rmtree(self.args['work-dir'])
+        os.mkdir(self.args['work-dir'])
+        if (self.args['keep']):
+            open(keep_file, 'w').close()
+        return self.args['work-dir']
+
+    def exec(self, work_dir, command_list, background=False):
+        util.info("exec: %s (in %s)" % (' '.join(command_list), work_dir))
+        original_cwd = os.getcwd()
+        os.chdir(work_dir)
+        return_code = os.system(" ".join(command_list)) >> 8
+        os.chdir(original_cwd)
+        if return_code:
+            util.error("exec: got return code: %d" % (return_code))
+        else:
+            util.debug("exec: returned without error")
+
+    def copy_parent_modified_args(self, parent_obj):
+        for key in parent_obj.modified_args.keys():
+            value = parent_obj.args[key]
+            self.args[key] = value
+            util.debug("Copied modified arg['%s']='%s'" % (key, value))
+
+    def process_tokens(self, tokens, process_all=True):
+        first = True
+        while (len(tokens) and (first or process_all)):
+            first = False
+            # see if it's a flag/option like --debug, --seed <n>, etc, or negating like --no-color
+            m = re.match(r'^\-\-([\w\-]+)$', tokens[0])
+            if m:
+                key = m.group(1)
+                new_state = True
+                m = re.match(r'^\-\-no\-([\w\-]+)$', key)
+                if m:
+                    key = m.group(1)
+                    new_state = False
+                if key in self.args:
+                    tokens.pop(0)
+                    if self.args[key]==True or self.args[key]==False: # is this a true/false flag
+                        if self.args[key] != new_state:
+                            self.args[key] = new_state
+                            self.modified_args[key] = True
+                            util.debug(f"Set arg[{key}]={new_state}")
+                            continue
+                        else:
+                            util.debug(f"Would set arg[{key}]={new_state}, but it already is")
+                            continue
+                    elif len(tokens): # this is an arg with a value, not a true/false flag
+                        value = tokens.pop(0)
+                        self.args[key] = value
+                        self.modified_args[key] = True
+                        util.debug("Set arg['%s']='%s'" % (key, value))
+                        continue
+                    else:
+                        util.error("Need a value after --%s" % (key))
+            # we were unable to figure out what this command line token is for...
+            if process_all:  util.error(f"Didn't understand command token: '{tokens[0]}' in {self.command_name} context")
+            else:            return False # if we aren't trying to process_all, the caller hopefully can take it
+        return True
+
+    def do_it(self):
+        util.error(f"Need to bind {self.command_name} command to a particular tool")
+
+class CommandDesign(Command):
+    def __init__(self, config, command_name):
+        Command.__init__(self, config, command_name)
+        self.args['seed'] = time.time()
+        self.args['top'] = None
+        self.args['all_sv'] = False
+        self.defines = { }
+        self.incdirs = []
+        self.files = { }
+        self.targets = { }
+        self.files_v = []
+        self.files_sv = []
+        self.files_vhd = []
+        oc_root = util.get_oc_root()
+        if oc_root: self.incdirs.append(oc_root)
+
+    def get_top_name(self, name):
+        return os.path.splitext(os.path.basename(name))[0]
+
+    def process_plusarg(self, plusarg):
+        m = re.match(r'^\+define\+(\w+)$', plusarg)
+        if m:
+            self.defines[m.group(1)] = None
+            util.debug(f"Defined {m.group(1)}")
+            return
+        m = re.match(r'^\+define\+(\w+)\=(\w+)$', plusarg)
+        if m:
+            self.defines[m.group(1)] = m.group(2)
+            util.debug(f"Defined {m.group(1)}={m.group(2)}")
+            return
+        m = re.match(r'^\+incdir\+(\S+)$', plusarg)
+        if m:
+            incdir = m.group(1)
+            self.incdirs.append(os.path.abspath(incdir))
+            util.debug(f"Added include dir '{incdir}'")
+            return
+        util.error(f"Didn't understand +plusarg: '{plusarg}'")
+
+    def resolve_target(self, target):
+        util.debug("Entered resolve_target(%s)" % (target))
+        targets = [ target ]
+        targets_dict = { target : None }
+        found_any_target = False
+        while len(targets):
+            found_this_target = False
+            t = targets.pop(0)
+            util.debug("Starting to resolve target '%s'" % (t))
+            t_path, t_node = os.path.split(t)
+            deps_file = os.path.join(t_path, "DEPS")
+            # yes, we reparse the DEPS file for every target we search for.  sometimes hitting a target causes
+            # side effects (like defining things) which then could affect DEPS.  TBD is the specific case where one
+            # target is pulled in multiple times and the defines/etc are different; it will just get read in first
+            # time, but the same can be said for file lists in general (we don't support re-reading files with
+            # different defines set, although this can always be done using `include in the sources)
+            # In general it's common to run into this "race" condition, i.e.  lib_synchronizer with two conditional
+            # implementations, we read it in before "GATE_SIM" is set by the top level target, because we pulled
+            # in a lib element causing us to read lib/DEPS (we had more than one thing on command line for example).
+            # so we don't worry about spending a few extra cycles and just doing it the "simple, inefficient" way.
+            if os.path.exists(deps_file):
+                f = open( deps_file, 'r' )
+                util.debug("Opened '%s'" % (deps_file))
+                in_dep = False
+                line_number = 0
+                for line in f:
+                    line_number += 1
+                    # clear out comments
+                    m = re.match(r'^([^\#]*)\#.*$', line)
+                    if m:
+                        line = m.group(1)
+                    # look for the declaration of a target, which looks like "<target> : [dep .. dep] \n [dep .. dep] \n"
+                    m = re.match(r'^\s*(\w+)\s*\:(.*)$', line)
+                    if m:
+                        if in_dep:
+                            util.debug("Done with %s at %s:%d" % (t, deps_file, line_number-1))
+                            break # stop looking through this DEP file, we cannot appear more than once
+                        elif m.group(1) == t_node:
+                            in_dep = True # we have found our DEP!
+                            found_this_target = True
+                            found_any_target = True
+                            line = m.group(2) # we trim down line and let lower code parse the rest
+                            util.debug("Found %s at %s:%d" % (t, deps_file, line_number))
+                        else:
+                            continue # it's the start of a DEP, but not ours
+                    else:
+                        if not in_dep:
+                            continue # move on to next line if we aren't currently in the DEP
+
+                    # at this point we are processing a line from our DEP, but we may do some conversions on it
+                    for dep_sub in self.config['dep_sub']:
+                        line = re.sub(dep_sub[0], dep_sub[1], line)
+                        m = re.search(r'\$(\w+)', line)
+                        while m: # do we have any variables to substitute?
+                            if m.group(1) in self.config['vars']:
+                                line = re.sub(r'\$%s' % (m.group(1)), self.config['vars'][m.group(1)], line)
+                            m = re.search(r'\$\w+', line)
+
+                    for dep in line.split():
+                        # see if this is a generated source file
+                        m = re.match(r'^\s*([\w\.]+)\@(\S+)\s*$', dep)
+                        if m:
+                            source_file = m.group(1)
+                            exec_csv = m.group(2)
+                            exec_list = exec_csv.split(",")
+                            util.info("Generating %s via '%s'" % (source_file, " ".join(exec_list)))
+                            self.exec(t_path, exec_list)
+                            if os.path.exists(os.path.join(t_path, source_file)):
+                                util.debug("Done generating %s via '%s'" % (os.path.join(t_path, source_file), " ".join(exec_list)))
+                                self.add_file(os.path.join(t_path, source_file))
+                                continue
+                            else:
+                                util.error("Failed to generate %s via '%s'" % (source_file, " ".join(exec_list)))
+                        # see if there's any conditionally included code
+
+                        # check for a Verilog style plusarg, which are supported under targets
+                        m = re.match(r'^\+(define|incdir)\+\S+$', dep)
+                        if m:
+                            util.debug("Got plusarg %s for target %s at %s:%d" % (dep, t, deps_file, line_number))
+                            self.process_plusarg(dep)
+                            continue
+
+                        # check for setting an EDA argument
+                        m = re.match(r'^\-\-(\w+)$', dep)
+                        if m:
+                            Command.process_tokens(self, [dep])
+                            continue
+
+                        # this dep hasn't been dealt with above, which are rare things, do it the normal way
+                        dep_path = os.path.join(t_path, dep)
+                        util.debug("Got dep %s for target %s at %s:%d" % (dep_path, t, deps_file, line_number))
+                        if dep_path in targets_dict:
+                            util.debug(" - already processed, skipping")
+                            continue
+                        targets_dict[dep_path] = None
+                        if os.path.exists(dep_path):
+                            util.debug(" - raw file, adding to file lists")
+                            self.add_file(dep_path)
+                        else:
+                            util.debug(" - a target needing to be resolved, adding to queue")
+                            targets.append(dep_path)
+
+            if not found_this_target:
+                util.debug("Haven't been able to resolve %s via DEPS" % (t))
+                for e in [ '.sv', '.v', '.vhd' ]:
+                    try_file = t+e
+                    util.debug("Looking for %s" % (try_file))
+                    if os.path.exists(try_file):
+                        self.add_file(try_file)
+                        found_this_target = True
+                        found_any_target = True
+                        break # move on to the next target
+                if not found_this_target: # if STILL not found_this_target...
+                    util.error("Unable to resolve target '%s'" % (t))
+
+        # if we've found any target since being called, it means we found the one we were called for
+        return found_any_target
+
+    def insert_file_in_order(self, file_list, filename, order=None):
+        if order==None:
+            order = 0 # default to zero
+            for file_order in self.config['file_order']:
+                m = re.match(file_order[0], filename)
+                if m: order=file_order[1] # if we match the regex, take order from the rule
+        # we now have an order, if it's >= 0, we start looking from the end
+        if order >= 0:
+            insert_position = len(file_list)
+            while ((insert_position > 0) and (self.files[file_list[insert_position-1]] > order)):
+                # the file just before our insert position has a higher order, need to be earlier
+                insert_position -= 1
+        # we have a negative order, start looking at the front
+        else:
+            insert_position = 0
+            while ((insert_position < len(file_list)) and (self.files[file_list[insert_position]] < order)):
+                # the file currently at our insert position has a lower order, need to be later
+                insert_position += 1
+        file_list.insert(insert_position, filename)
+        self.files[filename] = order
+        return order
+
+    def add_file(self, filename):
+        file_base, file_ext = os.path.splitext(filename)
+        file_abspath = os.path.abspath(filename)
+        if file_abspath in self.files:
+            util.debug("Not adding file %s, already have it" % (file_abspath))
+            return
+        if file_ext == '.v' and not self.args['all_sv']:
+            order = self.insert_file_in_order(self.files_v, file_abspath)
+            util.debug("Added Verilog file %s as %s (order=%d)" % (filename, file_abspath, order))
+        elif file_ext == '.sv' or (file_ext == '.v' and self.args['all_sv']):
+            order = self.insert_file_in_order(self.files_sv, file_abspath)
+            util.debug("Added SystemVerilog file %s as %s (order=%d)" % (filename, file_abspath, order))
+        elif file_ext == '.vhd':
+            order = self.insert_file_in_order(self.files_vhd, file_abspath)
+            util.debug("Added VHDL file %s as %s (order=%d)" % (filename, file_abspath, order))
+        return file_abspath
+
+    def process_tokens(self, tokens, process_all=True):
+        first = True
+        while (first or (len(tokens) and process_all)):
+            first = False
+            # see if it's a flag/option like --debug, --seed <n>, etc
+            if Command.process_tokens(self, tokens, process_all=False):
+                continue
+            # see if it's a CommandDesign specific option
+            m = re.match(r'^\+(define|incdir)\+\S+$', tokens[0])
+            if m:
+                self.process_plusarg(tokens[0])
+                tokens.pop(0)
+                continue
+            # by this point hopefully this is a target ... is it a simple filename?
+            if os.path.exists(tokens[0]):
+                file_abspath = add_file(tokens[0])
+                if self.args['top'] == None:
+                    # if we haven't yet been given a top, or inferred one, we take the first one we get
+                    self.args['top'] = self.get_top_name(file_abspath)
+                    util.info("Inferred arg['top']='%s'" % (self.args['top']))
+                tokens.pop(0)
+                continue
+            # we appear to be dealing with a target name which needs to be resolved (usually recursively)
+            if tokens[0][0] == os.sep:
+                target_name = tokens[0] # if it's absolute path, don't prepend anythng
+            else:
+                target_name = os.path.join(".", tokens[0]) # prepend ./so that we always have a <path>/<file>
+            if self.resolve_target(target_name):
+                if self.args['top'] == None:
+                    # if we haven't yet been given a top, or inferred one, we take the first one we get
+                    self.args['top'] = self.get_top_name(target_name)
+                    util.info("Inferred arg['top']='%s'" % (self.args['top']))
+                tokens.pop(0)
+                continue
+            # we were unable to figure out what this command line token is for...
+            if process_all:  util.error("Didn't understand command token: '%s' in CommandDesign" % (tokens[0]))
+            else:            return False # if we aren't trying to process_all, the caller hopefully can take it
+
+        self.defines['OC_SEED'] = "%d" % self.args['seed']
+
+class CommandSim(CommandDesign):
+    def __init__(self, config):
+        CommandDesign.__init__(self, config, "sim")
+        self.args['waves'] = False
+        self.args['waves-start'] = 0
+
+    def process_tokens(self, tokens, process_all=True):
+        CommandDesign.process_tokens(self, tokens, process_all)
+        # add defines for this job type
+        self.defines['SIMULATION'] = None
+        if (self.args['top'] != None):
+            # create our work dir
+            self.create_work_dir()
+            self.do_it()
+
+class CommandSynth(CommandDesign):
+    def __init__(self, config):
+        CommandDesign.__init__(self, config, "synth")
+        self.args['flatten_all'] = False
+        self.args['flatten_none'] = False
+        self.args['clock_ns'] = 5 # 200Mhz
+        self.args['idelay_ns'] = 2
+        self.args['odelay_ns'] = 2
+
+    def process_tokens(self, tokens, process_all=True):
+        CommandDesign.process_tokens(self, tokens, process_all)
+        # add defines for this job type
+        self.defines['SYNTHESIS'] = None
+        if (self.args['top'] != None):
+            # create our work dir
+            self.create_work_dir()
+            self.do_it()
+
+class ToolVivado:
+    def __init__(self):
+        self.vivado_year = None
+        self.vivado_release = None
+        self.args['xilinx'] = False
+        self.args['part'] = "xcu200-fsgd2104-2-e"
+        self.args['board'] = "xcu200"
+
+    def get_versions(self):
+        if self.vivado_year != None:
+            return
+        vivado_path = shutil.which('vivado')
+        if vivado_path == None:
+            util.error("Vivado not in path, need to setup (i.e. source /opt/Xilinx/Vivado/2022.2/settings64.sh")
+        util.debug("vivado_path = %s" % vivado_path)
+        m = re.search(r'(\d\d\d\d)\.(\d+)', vivado_path)
+        if m:
+            self.vivado_year = int(m.group(1))
+            self.vivado_release = int(m.group(2))
+            return
+        util.error("Vivado path doesn't specificy version, expecting (dddd.dd)")
+
+    def set_tool_defines(self):
+        # Will only be called from an object which also inherits from CommandDesign, i.e. has self.defines
+        self.get_versions()
+        self.defines['OC_TOOL_VIVADO'] = None
+        self.defines['OC_TOOL_VIVADO_%4d_%d' % (self.vivado_year, self.vivado_release)] = None
+        if self.args['xilinx']:
+            self.defines['OC_LIBRARY_ULTRASCALE_PLUS'] = None
+        else:
+            self.defines['OC_LIBRARY_BEHAVIORAL'] = None
+
+class CommandSimVivado(CommandSim, ToolVivado):
+    def __init__(self, config):
+        CommandSim.__init__(self, config)
+        ToolVivado.__init__(self)
+        # add args specific to this simulator
+        self.args['gui'] = False
+        self.args['tcl-file'] = "sim.tcl"
+
+    def do_it(self):
+        # add defines for this job
+        self.set_tool_defines()
+
+        # compile verilog
+        if len(self.files_v) or self.args['xilinx']:
+            command_list = [ 'xvlog' ]
+            if util.args['verbose']: command_list += ['-v', '2']
+            if self.args['xilinx']:
+                command_list += [ os.path.join( os.environ['XILINX_VIVADO'], 'data/verilog/src/glbl.v') ]
+            for value in self.incdirs:
+                command_list.append('-i')
+                command_list.append(value)
+            for key in self.defines.keys():
+                value = self.defines[key]
+                command_list.append('-d')
+                if value == None:
+                    command_list.append(key)
+                else:
+                    command_list.append("%s=%s" % (key, value))
+            command_list += self.files_v
+            self.exec(self.args['work-dir'], command_list)
+
+        # compile systemverilog
+        if len(self.files_sv):
+            command_list = [ 'xvlog' ]
+            command_list.append('-sv')
+            if util.args['verbose']: command_list += ['-v', '2']
+            for value in self.incdirs:
+                command_list.append('-i')
+                command_list.append(value)
+            for key in self.defines.keys():
+                value = self.defines[key]
+                command_list.append('-d')
+                if value == None:
+                    command_list.append(key)
+                else:
+                    command_list.append("\'%s=%s\'" % (key, value))
+            command_list += self.files_sv
+            self.exec(self.args['work-dir'], command_list)
+
+        # elab into snapshot
+        command_list = [ 'xelab' ]
+        command_list += [ self.args['top'], '-s', 'snapshot', '-timescale', '1ns/1ps', '--stats' ]
+        if self.args['gui'] and self.args['waves']: command_list += ['-debug', 'all']
+        elif self.args['gui']: command_list += ['-debug', 'typical']
+        elif self.args['waves']: command_list += ['-debug', 'wave']
+        if util.args['verbose']: command_list += ['-v', '2']
+        if self.args['xilinx']:
+            command_list += "-L xil_defaultlib -L unisims_ver -L unimacro_ver -L xpm -L secureip -L xilinx_vip".split(" ")
+            command_list += ['glbl']
+        self.exec(self.args['work-dir'], command_list)
+
+        # create TCL
+        tcl_name = os.path.abspath(os.path.join(self.args['work-dir'], self.args['tcl-file']))
+        with open( tcl_name, 'w' ) as fo:
+            if self.args['waves']:
+                if self.args['waves-start']:
+                    print("run %d ns" % self.args['waves-start'], file=fo)
+                print("log_wave -recursive *", file=fo)
+            print("run -all", file=fo)
+            if not self.args['gui']:
+                print("exit", file=fo)
+
+        # execute snapshot
+        command_list = [ 'xsim' ]
+        if self.args['gui']: command_list += ['-gui']
+        command_list += ['snapshot', '--stats', '--tclbatch', tcl_name]
+        self.exec(self.args['work-dir'], command_list)
+
+class CommandSynthVivado(CommandSynth, ToolVivado):
+    def __init__(self, config):
+        CommandSynth.__init__(self, config)
+        ToolVivado.__init__(self)
+        # add args specific to this simulator
+        self.args['gui'] = False
+        self.args['tcl-file'] = "synth.tcl"
+        self.args['xdc'] = None
+
+    def do_it(self):
+        # add defines for this job
+        self.set_tool_defines()
+
+        # create TCL
+        tcl_file = os.path.abspath(os.path.join(self.args['work-dir'], self.args['tcl-file']))
+        v = ""
+        if util.args['verbose']: v += " -verbose"
+        elif util.args['quiet']: v += " -quiet"
+        defines = ""
+        for key in self.defines.keys():
+            value = self.defines[key]
+            defines += (f"-verilog_define {key}" + (" " if value == None else f"={value} "))
+        incdirs = ""
+        if len(self.incdirs):
+            incdirs = " -include_dirs "+";".join(self.incdirs)
+        flatten = ""
+        if self.args['flatten_all']:    flatten = " -flatten_hierarchy full"
+        elif self.args['flatten_none']: flatten = " -flatten_hierarchy none"
+        with open( tcl_file, 'w' ) as fo:
+            for f in self.files_v:     print(f"read_verilog {f}", file=fo)
+            for f in self.files_sv:    print(f"read_verilog -sv {f}", file=fo)
+            for f in self.files_vhd:   print(f"add_file {f}", file=fo)
+            if self.args['xdc']:
+                default_xdc = False
+                xdc_file = os.path.abspath(self.args['xdc'])
+            else:
+                default_xdc = True
+                xdc_file = os.path.abspath(os.path.join(self.args['work-dir'], "default_constraints.xdc"))
+                util.info(f"Creating default constraints: clock_ns={self.args['clock_ns']}, "+
+                          f"idelay={self.args['idelay_ns']}, odelay={self.args['odelay_ns']}")
+                with open( xdc_file, 'w' ) as ft:
+                    print(f"create_clock -add -name clock -period {self.args['clock_ns']} [get_ports {{clock}}]", file=ft)
+                    print(f"set_input_delay -max {self.args['idelay_ns']} -clock clock "+
+                          f"[get_ports * -filter {{DIRECTION == IN && NAME !~ \"clock\"}}]", file=ft)
+                    print(f"set_output_delay -max {self.args['odelay_ns']} -clock clock "+
+                          f"[get_ports * -filter {{DIRECTION == OUT}}]", file=ft)
+            print(f"create_fileset -constrset constraints_1 {v}", file=fo)
+            print(f"add_files -fileset constraints_1 {xdc_file} {v}", file=fo)
+            constraints = "-constrset constraints_1"
+            print(f"# FIRST PASS -- auto_detect_xpm", file=fo)
+            print(f"synth_design -rtl -rtl_skip_ip -rtl_skip_constraints -no_timing_driven -no_iobuf "+
+                  f"-top {self.args['top']} {incdirs} {defines} {v}", file=fo)
+            print(f"auto_detect_xpm {v}", file=fo)
+            print(f"synth_design -no_iobuf -part {self.args['part']} {flatten} {constraints} "+
+                  f"-top {self.args['top']} {incdirs} {defines} {v}", file=fo)
+            print(f"write_verilog -force {self.args['top']}.vg {v}", file=fo)
+            print(f"report_utilization -file {self.args['top']}.flat.util.rpt {v}", file=fo)
+            print(f"report_utilization -file {self.args['top']}.hier.util.rpt {v} "+
+                  f"-hierarchical -hierarchical_depth 20", file=fo)
+            print(f"report_timing -file {self.args['top']}.timing.rpt {v}", file=fo)
+            print(f"report_timing_summary -file {self.args['top']}.summary.timing.rpt {v}", file=fo)
+            print(f"report_timing -from [all_inputs] "+
+                  f"-file {self.args['top']}.input.timing.rpt {v}", file=fo)
+            print(f"report_timing -to [all_outputs] "+
+                  f"-file {self.args['top']}.output.timing.rpt {v}", file=fo)
+            print(f"report_timing -from [all_inputs] -to [all_outputs] "+
+                  f"-file {self.args['top']}.through.timing.rpt {v}", file=fo)
+            print(f"set si [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup -from [all_inputs]]]", file=fo)
+            print(f"set so [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup -to [all_outputs]]]", file=fo)
+            print(f"set_false_path -from [all_inputs] {v}", file=fo)
+            print(f"set_false_path -to [all_outputs] {v}", file=fo)
+            print(f"set sf [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]", file=fo)
+            print(f"if {{ ! [string is double -strict $sf] }} {{ set sf 9999 }}", file=fo)
+            print(f"if {{ ! [string is double -strict $si] }} {{ set si 9999 }}", file=fo)
+            print(f"if {{ ! [string is double -strict $so] }} {{ set so 9999 }}", file=fo)
+            print(f"puts \"\"", file=fo)
+            print(f"puts \"*** ****************** ***\"", file=fo)
+            print(f"puts \"***                    ***\"", file=fo)
+            print(f"puts \"*** SYNTHESIS COMPLETE ***\"", file=fo)
+            print(f"puts \"***                    ***\"", file=fo)
+            print(f"puts \"*** ****************** ***\"", file=fo)
+            print(f"puts \"\"", file=fo)
+            print(f"puts \"** AREA **\"", file=fo)
+            print(f"report_utilization -hierarchical", file=fo)
+            print(f"puts \"** TIMING **\"", file=fo)
+            print(f"puts \"\"", file=fo)
+            if default_xdc:
+                print(f"puts \"(Used default XDC: {xdc_file})\"", file=fo)
+                print(f"puts \"DEF CLOCK NS  : [format %.3f {self.args['clock_ns']}]\"", file=fo)
+                print(f"puts \"DEF IDELAY NS : [format %.3f {self.args['idelay_ns']}]\"", file=fo)
+                print(f"puts \"DEF ODELAY NS : [format %.3f {self.args['odelay_ns']}]\"", file=fo)
+            else:
+                print(f"puts \"(Used provided XDC: {xdc_file})\"", file=fo)
+            print(f"puts \"\"", file=fo)
+            print(f"puts \"F2F SLACK     : [format %.3f $sf]\"", file=fo)
+            print(f"puts \"INPUT SLACK   : [format %.3f $si]\"", file=fo)
+            print(f"puts \"OUTPUT SLACK  : [format %.3f $so]\"", file=fo)
+            print(f"puts \"\"", file=fo)
+
+        # execute Vivado
+        command_list = [ 'vivado', '-mode', 'batch', '-source', tcl_file, '-log', f"{self.args['top']}.synth.log" ]
+        if not util.args['verbose']: command_list.append('-notrace')
+        self.exec(self.args['work-dir'], command_list)
+
+# ****************************************************************************************************
+# MAIN
+
+config = {
+    'command_handler' : { "sim" : CommandSimVivado, "synth" : CommandSynthVivado },
+    'dep_sub' : [ [ r'csr\@(\w+)\.txt', r'\1.sv@csrgen,\1.txt $root_dir/v_csr_regs_deps'], ],
+    'file_order' : [ [ r'\S+_pkg\.sv', -100 ], ],
+    'vars' : { 'root_dir' : os.path.abspath(os.getcwd()) },
+}
+
+def usage():
+    print("")
+    print("Usage: eda <command> <options> <targets>")
+
+def interactive():
+    read_file = False
+    while True:
+        if read_file:
+            line = f.readline()
+            if line:
+                print("%s->%s" % (fname, line), end="")
+            else:
+                read_file = False
+                f.close()
+                continue
+        else:
+            line = input('EDA->')
+        m = re.match(r'^([^\#]*)\#.*$', line)
+        if m: line = m.group(1)
+        tokens = line.split()
+        process_tokens(tokens)
+
+def process_tokens(tokens):
+    # this is the top level token processing function.  tokens can come from command line, setup file, or interactively.
+    # we do one pass through all the tokens, triaging them into:
+    # - those we can execute immediate (help, quit, bind, and global opens like --verbose, --debug, --color)
+    # - a command (sim, synth, etc)
+    # - command arguments (--seed, +define, +incdir, etc) which will be deferred and processed by the command
+    deferred_tokens = []
+    command = ""
+    while (len(tokens)):
+        token = tokens.pop(0)
+        if (token == 'quit') or (token == 'q') or (token == 'exit'):
+            exit(0)
+        if ((token == 'help') or (token == 'h') or
+            (token == '-help') or (token == '-h') or
+            (token == '--help') or (token == '--h')):
+            usage()
+            exit(0)
+        if util.process_token(token): # see if eda_util needs to process this (printing related)
+            continue
+        if token == 'bind':
+            if len(tokens) < 2: util.error("Need two arguments after 'bind'")
+            exec("config['command_handler']['%s'] = %s" % (tokens[0], tokens[1]))
+            continue
+        if token in config['command_handler']:
+            if (command != ""): util.error(f"Got command '{token}' after already being given '{command}'")
+            command = token
+            continue
+        deferred_tokens.append(token)
+    if command =="": util.error(f"Didn't get a command!")
+    sco = config['command_handler'][command](config) # sub command object
+    sco.process_tokens(deferred_tokens)
+
+def main():
+    if len(sys.argv)>1:
+        # at some point lets use the name of the program to lookup a command translation.  then someone can
+        # softlink say "isim" to "eda", and we translate that into "eda sim" which takes pretty standard
+        # args just fine.  eventually define a translation layer for arguments to enable mapping features
+        # when emulating the command line of other tools.
+        process_tokens(sys.argv[1:])
+    else:
+        util.info("*** OpenCOS EDA Tool Wrapper ***")
+        interactive() # go interactive if not given any arguments
+
+
+if __name__ == "__main__":
+    # First we check if we are respawning
+    eda_path = os.path.realpath(__file__)
+    if debug_respawn: util.debug(f"RESPAWN: eda_path: '{eda_path}'")
+    oc_root = util.get_oc_root()
+    if debug_respawn: util.debug(f"RESPAWN: oc_root : '{oc_root}'")
+    cwd = os.getcwd()
+    if debug_respawn: util.debug(f"RESPAWN: cwd     : '{cwd}'")
+    if oc_root and (not '-respawn' in sys.argv):
+        new_eda_path = os.path.join(oc_root, "bin", "eda")
+        if (eda_path != new_eda_path):
+            # we are not the correct version of EDA for this Git repo, we should respawn
+            util.info('%s respawning %s in %s' % (eda_path, new_eda_path, cwd))
+            sys.argv[0] = new_eda_path
+            proc = subprocess.Popen(sys.argv, shell=0, cwd=cwd, universal_newlines=True)
+            while True:
+                try:
+                    proc.communicate()
+                    break
+                except KeyboardInterrupt:
+                    continue
+            util.exit()
+    main()
+
+# TODO:
+# * read config from config files (script dir, home dir, cwd upwards to ... ? )
+# * add synth
+# * create xdc on the fly via command line or DEPS target settings (setting vars other than defines in the DEPs?)
+# * start meda at this point, focus is N jobs on M cores, for sweeping and regressions (sweep will use xdc-on-the-fly stuff)

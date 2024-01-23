@@ -1,4 +1,5 @@
-# Open Chip Operating System
-(aka OpenChip/OpenCOS)
+# OpenCOS Documentation
 
-Very eloquent writing here
+## Chapters
+
+* [Directory Structure](DirectoryStructure.md)
