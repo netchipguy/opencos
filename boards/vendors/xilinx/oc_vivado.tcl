@@ -17,7 +17,7 @@ variable oc_clocks
 # the goal of this func is to cause a warning to be shown in the Vivado GUI, so we trigger a fake warning about a pin
 # whose name tells us what issue caused the warning
 proc oc_throw_warning { w } {
-    get_pins OC_THROWN_WARNING_${w}
+    get_pins ${w}
 }
 
 # expected to be called by the chip_constraints.tcl master constraint file

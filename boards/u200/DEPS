@@ -1,0 +1,4 @@
+
+oc_chip_top:
+        oc_chip_top.sv
+        ../../top/oc_cos

@@ -220,28 +220,92 @@
   `endif
 
 // *****************************************************************************************
+// ******** LOGIC WHEN SETTING DEFINES
+// *****************************************************************************************
+
+  `define OC_IFDEF_ANDIFDEF_DEFINE(a,b,o) \
+  `ifdef a\
+  `ifdef b\
+    `define o\
+  `endif\
+  `endif
+
+  `define OC_IFDEF_ORIFDEF_DEFINE(a,b,o) \
+  `ifdef a\
+    `define o\
+  `endif\
+  `ifdef b\
+    `define o\
+  `endif
+
+  `define OC_IFDEF_ANDIFNDEF_DEFINE(a,b,o) \
+  `ifdef a\
+  `ifndef b\
+    `define o\
+  `endif\
+  `endif
+
+  `define OC_IFDEF_ORIFNDEF_DEFINE(a,b,o) \
+  `ifdef a\
+    `define o\
+  `endif\
+  `ifndef b\
+    `define o\
+  `endif
+
+  `define OC_IFNDEF_ANDIFNDEF_DEFINE(a,b,o) \
+  `ifndef a\
+  `ifndef b\
+    `define o\
+  `endif\
+  `endif
+
+  `define OC_IFNDEF_ORIFNDEF_DEFINE(a,b,o) \
+  `ifndef a\
+    `define o\
+  `endif\
+  `ifndef b\
+    `define o\
+  `endif
+
+  `define OC_IFDEF_ANDIFDEF_UNDEF(a,b,o) \
+  `ifdef a\
+  `ifdef b\
+    `undef o\
+  `endif\
+  `endif
+
+  `define OC_IFDEF_ORIFDEF_UNDEF(a,b,o) \
+  `ifdef a\
+    `undef o\
+  `endif\
+  `ifdef b\
+    `undef o\
+  `endif
+
+// *****************************************************************************************
 // ******** HELP SETTING VALUES FROM DEFINES
 // *****************************************************************************************
 
   `define OC_VAL_ASDEFINED_ELSE(d,e) \
-  `ifdef d \
-    `d \
-  `else \
-    e \
+  `ifdef d\
+    `d\
+  `else\
+    e\
   `endif
 
   `define OC_VAL_IFDEF_THEN_ELSE(d,t,e) \
-  `ifdef d \
-     t \
-  `else \
-     e \
+  `ifdef d\
+     t\
+  `else\
+     e\
   `endif
 
   `define OC_VAL_IFDEF(d) \
-  `ifdef d \
-     1'b1 \
-  `else \
-     1'b0 \
+  `ifdef d\
+     1'b1\
+  `else\
+     1'b0\
   `endif
 
 // *****************************************************************************************

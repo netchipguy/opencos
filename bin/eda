@@ -19,6 +19,7 @@ class Command:
             "force" : False,
             "eda-dir" : "eda.work",
             "work-dir" : None,
+            "design" : None,
         }
         self.modified_args = {}
         self.config = config
@@ -27,8 +28,13 @@ class Command:
     def create_work_dir(self):
         if (not os.path.exists(self.args['eda-dir'])): # use os.path.isfile / isdir also
             os.mkdir(self.args['eda-dir'])
+        if self.args['design'] == None:
+            if ('top' in self.args) and (self.args['top'] != None):
+                self.args['design'] = self.args['top']
+            else:
+                self.args['design'] = "design" # generic, i.e. to create work dir "design_upload"
         if self.args['work-dir'] == None:
-            self.args['work-dir'] = os.path.join(self.args['eda-dir'], "%s_%s" % (self.args['top'], self.command_name))
+            self.args['work-dir'] = os.path.join(self.args['eda-dir'], "%s_%s" % (self.args['design'], self.command_name))
         keep_file = os.path.join(self.args['work-dir'], "eda.keep")
         if (os.path.exists(self.args['work-dir'])):
             if os.path.exists(keep_file) and not self.args['force']:
@@ -66,7 +72,7 @@ class Command:
             if m:
                 key = m.group(1)
                 new_state = True
-                m = re.match(r'^\-\-no\-([\w\-]+)$', key)
+                m = re.match(r'^no\-([\w\-]+)$', key)
                 if m:
                     key = m.group(1)
                     new_state = False
@@ -350,11 +356,11 @@ class CommandSim(CommandDesign):
 class CommandSynth(CommandDesign):
     def __init__(self, config):
         CommandDesign.__init__(self, config, "synth")
-        self.args['flatten_all'] = False
-        self.args['flatten_none'] = False
-        self.args['clock_ns'] = 5 # 200Mhz
-        self.args['idelay_ns'] = 2
-        self.args['odelay_ns'] = 2
+        self.args['flatten-all'] = False
+        self.args['flatten-none'] = False
+        self.args['clock-ns'] = 5 # 200Mhz
+        self.args['idelay-ns'] = 2
+        self.args['odelay-ns'] = 2
 
     def process_tokens(self, tokens, process_all=True):
         CommandDesign.process_tokens(self, tokens, process_all)
@@ -364,6 +370,61 @@ class CommandSynth(CommandDesign):
             # create our work dir
             self.create_work_dir()
             self.do_it()
+
+class CommandFList(CommandDesign):
+    def __init__(self, config):
+        CommandDesign.__init__(self, config, "flist")
+        self.args['out'] = "flist.out"
+        self.args['emit-define'] = True
+        self.args['emit-incdir'] = True
+        self.args['emit-v'] = True
+        self.args['emit-sv'] = True
+        self.args['emit-vhd'] = True
+        self.args['prefix-define'] = "+define+"
+        self.args['prefix-incdir'] = "+incdir+"
+        self.args['prefix-v'] = ""
+        self.args['prefix-sv'] = ""
+        self.args['prefix-vhd'] = ""
+
+    def process_tokens(self, tokens, process_all=True):
+        CommandDesign.process_tokens(self, tokens, process_all)
+        # add defines for this job type
+        self.defines['SYNTHESIS'] = None
+        if (self.args['top'] != None):
+            if os.path.exists(self.args['out']):
+                if self.args['force']:
+                    util.info(f"Removing existing {self.args['out']}")
+                    os.remove(self.args['out'])
+                else:
+                    util.error(f"Not overwriting {self.args['out']} unless you specify -force")
+            with open( self.args['out'] , 'w' ) as fo:
+                if self.args['emit-define']:
+                    for d in self.defines:
+                        if self.defines[d] == None:
+                            print(f"{self.args['prefix-define']}{d}", file=fo)
+                        else:
+                            print(f"{self.args['prefix-define']}\'{d}={self.defines[d]}\'", file=fo)
+                if self.args['emit-incdir']:
+                    for i in self.incdirs:
+                        print(f"{self.args['prefix-incdir']}{i}", file=fo)
+                if self.args['emit-v']:
+                    for f in self.files_v:
+                        print(f"{self.args['prefix-v']}{f}", file=fo)
+                if self.args['emit-sv']:
+                    for f in self.files_sv:
+                        print(f"{self.args['prefix-sv']}{f}", file=fo)
+                if self.args['emit-vhd']:
+                    for f in self.files_vhd:
+                        print(f"{self.args['prefix-vhd']}{f}", file=fo)
+
+class CommandUpload(CommandDesign):
+    def __init__(self, config):
+        Command.__init__(self, config, "upload")
+
+    def process_tokens(self, tokens, process_all=True):
+        Command.process_tokens(self, tokens, process_all)
+        self.create_work_dir()
+        self.do_it()
 
 class ToolVivado:
     def __init__(self):
@@ -424,7 +485,7 @@ class CommandSimVivado(CommandSim, ToolVivado):
                 if value == None:
                     command_list.append(key)
                 else:
-                    command_list.append("%s=%s" % (key, value))
+                    command_list.append("\'%s=%s\'" % (key, value))
             command_list += self.files_v
             self.exec(self.args['work-dir'], command_list)
 
@@ -501,8 +562,8 @@ class CommandSynthVivado(CommandSynth, ToolVivado):
         if len(self.incdirs):
             incdirs = " -include_dirs "+";".join(self.incdirs)
         flatten = ""
-        if self.args['flatten_all']:    flatten = " -flatten_hierarchy full"
-        elif self.args['flatten_none']: flatten = " -flatten_hierarchy none"
+        if self.args['flatten-all']:    flatten = " -flatten_hierarchy full"
+        elif self.args['flatten-none']: flatten = " -flatten_hierarchy none"
         with open( tcl_file, 'w' ) as fo:
             for f in self.files_v:     print(f"read_verilog {f}", file=fo)
             for f in self.files_sv:    print(f"read_verilog -sv {f}", file=fo)
@@ -513,13 +574,13 @@ class CommandSynthVivado(CommandSynth, ToolVivado):
             else:
                 default_xdc = True
                 xdc_file = os.path.abspath(os.path.join(self.args['work-dir'], "default_constraints.xdc"))
-                util.info(f"Creating default constraints: clock_ns={self.args['clock_ns']}, "+
-                          f"idelay={self.args['idelay_ns']}, odelay={self.args['odelay_ns']}")
+                util.info(f"Creating default constraints: --clock-ns={self.args['clock-ns']}, "+
+                          f"--idelay-ns={self.args['idelay-ns']}, --odelay-ns={self.args['odelay-ns']}")
                 with open( xdc_file, 'w' ) as ft:
-                    print(f"create_clock -add -name clock -period {self.args['clock_ns']} [get_ports {{clock}}]", file=ft)
-                    print(f"set_input_delay -max {self.args['idelay_ns']} -clock clock "+
+                    print(f"create_clock -add -name clock -period {self.args['clock-ns']} [get_ports {{clock}}]", file=ft)
+                    print(f"set_input_delay -max {self.args['idelay-ns']} -clock clock "+
                           f"[get_ports * -filter {{DIRECTION == IN && NAME !~ \"clock\"}}]", file=ft)
-                    print(f"set_output_delay -max {self.args['odelay_ns']} -clock clock "+
+                    print(f"set_output_delay -max {self.args['odelay-ns']} -clock clock "+
                           f"[get_ports * -filter {{DIRECTION == OUT}}]", file=ft)
             print(f"create_fileset -constrset constraints_1 {v}", file=fo)
             print(f"add_files -fileset constraints_1 {xdc_file} {v}", file=fo)
@@ -563,9 +624,9 @@ class CommandSynthVivado(CommandSynth, ToolVivado):
             print(f"puts \"\"", file=fo)
             if default_xdc:
                 print(f"puts \"(Used default XDC: {xdc_file})\"", file=fo)
-                print(f"puts \"DEF CLOCK NS  : [format %.3f {self.args['clock_ns']}]\"", file=fo)
-                print(f"puts \"DEF IDELAY NS : [format %.3f {self.args['idelay_ns']}]\"", file=fo)
-                print(f"puts \"DEF ODELAY NS : [format %.3f {self.args['odelay_ns']}]\"", file=fo)
+                print(f"puts \"DEF CLOCK NS  : [format %.3f {self.args['clock-ns']}]\"", file=fo)
+                print(f"puts \"DEF IDELAY NS : [format %.3f {self.args['idelay-ns']}]\"", file=fo)
+                print(f"puts \"DEF ODELAY NS : [format %.3f {self.args['odelay-ns']}]\"", file=fo)
             else:
                 print(f"puts \"(Used provided XDC: {xdc_file})\"", file=fo)
             print(f"puts \"\"", file=fo)
@@ -579,12 +640,82 @@ class CommandSynthVivado(CommandSynth, ToolVivado):
         if not util.args['verbose']: command_list.append('-notrace')
         self.exec(self.args['work-dir'], command_list)
 
+class CommandUploadVivado(CommandUpload, ToolVivado):
+    def __init__(self, config):
+        CommandUpload.__init__(self, config)
+        ToolVivado.__init__(self)
+        # add args specific to this simulator
+        self.args['gui'] = False
+        self.args['file'] = False
+        self.args['usb'] = True
+        self.args['host'] = "localhost"
+        self.args['port'] = 3121
+        self.args['target'] = 0
+        self.args['tcl-file'] = "upload.tcl"
+
+    def do_it(self):
+        if self.args['file'] == False:
+            util.info(f"Searching for bitfiles...")
+            found_file = False
+            found_time = 0
+            for root, dirs, files in os.walk("."):
+                for file in files:
+                    if file.endswith(".bit"):
+                        found_file = os.path.abspath(os.path.join(root,file))
+                        found_time = 1
+                        util.info(f"Found bitfile: {found_file}")
+            self.args['file'] = found_file
+
+        if self.args['usb']:
+            util.info(f"Uploading bitfile: {self.args['file']}")
+            util.info(f"Uploading via {self.args['host']}:{self.args['port']} USB target #{self.args['target']}")
+            self.upload_usb_jtag(self.args['host'], self.args['port'], self.args['target'], self.args['file'])
+        else:
+            util.error(f"Only know how to upload via USB for now")
+
+    def upload_usb_jtag(self, host, port, target, bit_file):
+        # create TCL
+        tcl_file = os.path.abspath(os.path.join(self.args['work-dir'], self.args['tcl-file']))
+        ltx_file = os.path.splitext(bit_file)[0] + ".ltx"
+        if not os.path.exists(ltx_file):
+            ltx_file = False
+
+        with open( tcl_file, 'w' ) as fo:
+            print(f"open_hw", file=fo)
+            print(f"connect_hw_server -url {host}:{port}", file=fo)
+            print(f"refresh_hw_server -force_poll", file=fo)
+            print(f"set hw_targets [get_hw_targets */xilinx_tcf/Xilinx/*]", file=fo)
+            print(f"if {{ [llength $hw_targets] <= {target} }} {{", file=fo)
+            print(f"  puts \"ERROR: There is no target number {target}\"", file=fo)
+            print(f"}}", file=fo)
+            print(f"current_hw_target [lindex $hw_targets {target}]", file=fo)
+            print(f"open_hw_target", file=fo)
+            print(f"refresh_hw_target", file=fo)
+            print(f"current_hw_device [lindex [get_hw_devices] 0]", file=fo)
+            print(f"refresh_hw_device [current_hw_device]", file=fo)
+            print(f"set_property PROGRAM.FILE {bit_file} [current_hw_device]", file=fo)
+            if ltx_file:
+                print(f"set_property PROBES.FILE {ltx_file} [current_hw_device]", file=fo)
+            print(f"program_hw_devices [current_hw_device]", file=fo)
+            print(f"close_hw_target", file=fo)
+            print(f"exit", file=fo)
+
+        # execute Vivado
+        command_list = [ 'vivado', '-mode', 'batch', '-source', tcl_file, '-log', f"design.upload.log" ]
+        self.exec(self.args['work-dir'], command_list)
+
 # ****************************************************************************************************
 # MAIN
 
 config = {
-    'command_handler' : { "sim" : CommandSimVivado, "synth" : CommandSynthVivado },
+    'command_handler' : { "sim" : CommandSimVivado,
+                          "synth" : CommandSynthVivado,
+                          "flist" : CommandFList,
+                          "upload" : CommandUploadVivado, },
     'dep_sub' : [ [ r'csr\@(\w+)\.txt', r'\1.sv@csrgen,\1.txt $root_dir/v_csr_regs_deps'], ],
+    # TODO: I don't think we want file_order stuff.  Anyway how do you handle a package pulling in another package.
+    # best if we keep files in the order declared via DEPS and require that you include packages before dependent source
+    # OR require that packages are `included?
     'file_order' : [ [ r'\S+_pkg\.sv', -100 ], ],
     'vars' : { 'root_dir' : os.path.abspath(os.getcwd()) },
 }

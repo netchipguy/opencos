@@ -46,7 +46,7 @@ Library elements
     - `+libext+.sv+.v`
 - Include files should use header guards
     - ``ifdef __LIB_OCLIB_DEFINES_VH`
-- RTL files should pull in includes (not include them in DEPS)
+- RTL files should ``include` their dependencies (not include them in DEPS)
 
 ## Parameters
 - Always have default values
