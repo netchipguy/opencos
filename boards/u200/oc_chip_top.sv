@@ -8,8 +8,8 @@
 module oc_chip_top
   #(
     // *** MISC ***
-//    parameter integer Seed = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_SEED,0), // seed to generate varying implementation results
-    parameter integer Seed = 0,
+    parameter integer Seed = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_SEED,0), // seed to generate varying implementation results
+    parameter bit     EnableUartControl = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_ENABLE_UART_CONTROL,1),
     // *** REFCLOCK ***
     parameter integer RefClockCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_REFCLOCK_COUNT,1),
     `OC_LOCALPARAM_SAFE(RefClockCount), // we won't need this, though, since it's mandatory to have one refclk for top
@@ -74,29 +74,17 @@ module oc_chip_top
   // (temperature etc), LED (monitor/drive), UART (monitor/drive).
   logic                     debugReset;
 
-  `OC_IFDEF_ANDIFNDEF_DEFINE(OC_BOARD_TOP_DEBUG, SIMULATION, OC_CHIP_TOP_INCLUDE_VIO_DEBUG);
-
-`ifdef OC_CHIP_TOP_INCLUDE_VIO_DEBUG
+`ifdef OC_BOARD_TOP_DEBUG
 
   logic [27:0]            clockRefTopDivide = '0;
-  always_ff @(posedge clockRef[0]) clockRefTopDivide <= (clockRefTopDivide + 'd1);
+  always_ff @(posedge clockRef[ClockTop]) clockRefTopDivide <= (clockRefTopDivide + 'd1);
 
-  logic [31:(LedCountSafe+LedCountSafe+
-             1+1+
-             UartCountSafe+UartCountSafe+UartCountSafe)]    debugDummyIn = '0;
-  logic [31:(LedCountSafe+
-             1+
-             UartCountSafe)]                                debugDummyOut;
+  `OC_DEBUG_VIO(uVIO, clockRef[ClockTop], 32, 32,
+                { ~ledOut,ledOut,
+                  debugReset, clockRefTopDivide[27],
+                  debugUartTx, uartRx, uartTx},
+                { debugLed, debugReset, debugUartTx });
 
-  xip_vio_i32_o32 uVIO (.clk(clockRef[0]),
-                        .probe_in0({debugDummyIn,
-                                    ~ledOut,ledOut,
-                                    debugReset, clockRefTopDivide[27],
-                                    debugUartTx, uartRx, uartTx}),
-                        .probe_out0({debugDummyOut,
-                                     debugLed,
-                                     debugReset,
-                                     debugUartTx}));
 `else // !`ifdef OC_CHIP_TOP_INCLUDE_VIO_DEBUG
   assign debugReset = '0;
   assign debugUartTx = '0;
@@ -109,7 +97,8 @@ module oc_chip_top
 
   oc_cos #(
            // *** MISC ***
-            .Seed(Seed),
+           .Seed(Seed),
+           .EnableUartControl(EnableUartControl),
            // *** REFCLOCK ***
            .RefClockCount(RefClockCount),
            .RefClockHz(RefClockHz),
@@ -122,16 +111,16 @@ module oc_chip_top
            .UartBaud(UartBaud),
            .UartControl(UartControl)
           )
-  (
-   // *** REFCLOCK ***
-   .clockRef(clockRef),
-   // *** RESET ***
-   .hardReset(debugReset),
-   // *** LED ***
-   .ledOut(ledOut),
-   // *** UART ***
-   .uartRx(uartRx),
-   .uartTx(uartTx)
-   );
+  uCOS (
+        // *** REFCLOCK ***
+        .clockRef(clockRef),
+        // *** RESET ***
+        .hardReset(debugReset),
+        // *** LED ***
+        .ledOut(ledOut),
+        // *** UART ***
+        .uartRx(uartRx),
+        .uartTx(uartTx)
+        );
 
 endmodule // oc_chip_top

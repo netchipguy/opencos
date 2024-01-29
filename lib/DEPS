@@ -1,0 +1,24 @@
+
+oclib_uart:
+        oclib_uart.sv
+        oclib_uart_rx
+        oclib_uart_tx
+        oclib_bc_adapter
+        oclib_synchronizer
+
+oclib_uart_rx:
+        oclib_uart_rx.sv
+        oclib_debounce
+
+oclib_uart_tx:
+        oclib_uart_tx.sv
+        oclib_fifo
+
+oclib_debounce:
+        oclib_debounce.sv
+
+oclib_bc_adapter:
+        oclib_bc_adapter.sv
+
+oclib_fifo:
+        oclib_fifo.sv

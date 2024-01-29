@@ -57,12 +57,6 @@ class Command:
         else:
             util.debug("exec: returned without error")
 
-    def copy_parent_modified_args(self, parent_obj):
-        for key in parent_obj.modified_args.keys():
-            value = parent_obj.args[key]
-            self.args[key] = value
-            util.debug("Copied modified arg['%s']='%s'" % (key, value))
-
     def process_tokens(self, tokens, process_all=True):
         first = True
         while (len(tokens) and (first or process_all)):
@@ -102,6 +96,21 @@ class Command:
 
     def do_it(self):
         util.error(f"Need to bind {self.command_name} command to a particular tool")
+
+    def help(self):
+        util.info(f"Generic help (from class Command):")
+        for k in sorted(self.args.keys()):
+            v = self.args[k]
+            if (v == True) or (v == False):
+                util.info(f"   {k:20} : boolean")
+            elif isinstance(v, int):
+                util.info(f"   {k:20} : integer")
+            elif isinstance(v, list):
+                util.info(f"   {k:20} : list")
+            elif isinstance(v, str):
+                util.info(f"   {k:20} : string")
+            else:
+                util.info(f"   {k:20} : <unknown type>")
 
 class CommandDesign(Command):
     def __init__(self, config, command_name):
@@ -313,7 +322,7 @@ class CommandDesign(Command):
                 continue
             # by this point hopefully this is a target ... is it a simple filename?
             if os.path.exists(tokens[0]):
-                file_abspath = add_file(tokens[0])
+                file_abspath = self.add_file(tokens[0])
                 if self.args['top'] == None:
                     # if we haven't yet been given a top, or inferred one, we take the first one we get
                     self.args['top'] = self.get_top_name(file_abspath)
@@ -343,6 +352,8 @@ class CommandSim(CommandDesign):
         CommandDesign.__init__(self, config, "sim")
         self.args['waves'] = False
         self.args['waves-start'] = 0
+        # the following is used to enable "eda elab" (in general we will give certain tools option to stop early: lint etc)
+        self.stop_after_compile = False
 
     def process_tokens(self, tokens, process_all=True):
         CommandDesign.process_tokens(self, tokens, process_all)
@@ -388,8 +399,6 @@ class CommandFList(CommandDesign):
 
     def process_tokens(self, tokens, process_all=True):
         CommandDesign.process_tokens(self, tokens, process_all)
-        # add defines for this job type
-        self.defines['SYNTHESIS'] = None
         if (self.args['top'] != None):
             if os.path.exists(self.args['out']):
                 if self.args['force']:
@@ -403,7 +412,7 @@ class CommandFList(CommandDesign):
                         if self.defines[d] == None:
                             print(f"{self.args['prefix-define']}{d}", file=fo)
                         else:
-                            print(f"{self.args['prefix-define']}\'{d}={self.defines[d]}\'", file=fo)
+                            print(f"{self.args['prefix-define']}\"{d}={self.defines[d]}\"", file=fo)
                 if self.args['emit-incdir']:
                     for i in self.incdirs:
                         print(f"{self.args['prefix-incdir']}{i}", file=fo)
@@ -416,6 +425,61 @@ class CommandFList(CommandDesign):
                 if self.args['emit-vhd']:
                     for f in self.files_vhd:
                         print(f"{self.args['prefix-vhd']}{f}", file=fo)
+
+class CommandWaves(CommandDesign):
+    def __init__(self, config):
+        Command.__init__(self, config, "waves")
+
+    def process_tokens(self, tokens, process_all=True):
+        wave_file = None
+        wave_dirs = []
+        while len(tokens):
+            # see if it's a flag/option like --debug, --seed <n>, etc
+            if Command.process_tokens(self, tokens, process_all=False):
+                continue
+            if os.path.isfile(tokens[0]):
+                if (wave_file != None):
+                    util.error(f"Was already given wave file {wave_file}, not sure what to do with {tokens[0]}")
+                wave_file = os.path.abspath(tokens[0])
+                tokens.pop(0)
+                continue
+            if os.path.isdir(tokens[0]):
+                if (wave_file != None):
+                    util.error(f"Was already given wave file {wave_file}, not sure what to do with {tokens[0]}")
+                wave_dirs.append(tokens[0])
+            util.error("Didn't understand command token: '%s' in CommandWaves" % (tokens[0]))
+        if not wave_file:
+            util.info(f"need to look for wave file")
+            # we weren't given a wave file, so we will look for one!
+            if (len(wave_dirs) == 0) and os.path.isdir(self.args['eda-dir']):
+                wave_dirs.append(self.args['eda-dir'])
+            if (len(wave_dirs) == 0):
+                wave_dirs.append(self.args['.'])
+            all_wave_files = []
+            for d in wave_dirs:
+                util.info(f"Looking for wavedumps below: {d}")
+                for root, dirs, files in os.walk(d):
+                    for f in files:
+                        for e in [ '.wdb', '.vcd' ]:
+                            if f.endswith(e):
+                                util.info(f"Found wave file: {os.path.join(root,f)}")
+                                all_wave_files.append(os.path.join(root,f))
+            if len(all_wave_files) > 1:
+                all_wave_files.sort(key=lambda f: os.path.getmtime(f))
+            if len(all_wave_files):
+                wave_file = all_wave_files[-1]
+            else:
+                util.error(f"Couldn't find any wave files below: {','.join(wave_dirs)}")
+
+        wave_file = os.path.abspath(wave_file)
+        util.info(f"decided on opening: {wave_file}")
+        tcl_name = wave_file + '.waves.tcl'
+        with open( tcl_name,'w') as fo :
+            print( 'current_fileset', file=fo)
+            print( 'open_wave_database %s' % wave_file, file=fo)
+
+        command_list = ['vivado', '-source', tcl_name]
+        self.exec(os.path.dirname(wave_file), command_list)
 
 class CommandUpload(CommandDesign):
     def __init__(self, config):
@@ -519,6 +583,9 @@ class CommandSimVivado(CommandSim, ToolVivado):
             command_list += ['glbl']
         self.exec(self.args['work-dir'], command_list)
 
+        # check if we're bailing out early
+        if self.stop_after_compile: return
+
         # create TCL
         tcl_name = os.path.abspath(os.path.join(self.args['work-dir'], self.args['tcl-file']))
         with open( tcl_name, 'w' ) as fo:
@@ -535,6 +602,12 @@ class CommandSimVivado(CommandSim, ToolVivado):
         if self.args['gui']: command_list += ['-gui']
         command_list += ['snapshot', '--stats', '--tclbatch', tcl_name]
         self.exec(self.args['work-dir'], command_list)
+
+class CommandElabVivado(CommandSimVivado):
+    def __init__(self, config):
+        CommandSimVivado.__init__(self, config)
+        # add args specific to this simulator
+        self.stop_after_compile = True
 
 class CommandSynthVivado(CommandSynth, ToolVivado):
     def __init__(self, config):
@@ -697,11 +770,17 @@ class CommandUploadVivado(CommandUpload, ToolVivado):
             if ltx_file:
                 print(f"set_property PROBES.FILE {ltx_file} [current_hw_device]", file=fo)
             print(f"program_hw_devices [current_hw_device]", file=fo)
-            print(f"close_hw_target", file=fo)
-            print(f"exit", file=fo)
+            if self.args['gui']:
+                print(f"refresh_hw_device [current_hw_device]", file=fo)
+            else:
+                print(f"close_hw_target", file=fo)
+                print(f"exit", file=fo)
 
         # execute Vivado
-        command_list = [ 'vivado', '-mode', 'batch', '-source', tcl_file, '-log', f"design.upload.log" ]
+        command_list = [ 'vivado', '-source', tcl_file, '-log', f"design.upload.log" ]
+        if not self.args['gui']:
+            command_line.append('-mode')
+            command_line.append('batch')
         self.exec(self.args['work-dir'], command_list)
 
 # ****************************************************************************************************
@@ -709,8 +788,10 @@ class CommandUploadVivado(CommandUpload, ToolVivado):
 
 config = {
     'command_handler' : { "sim" : CommandSimVivado,
+                          "elab" : CommandElabVivado,
                           "synth" : CommandSynthVivado,
                           "flist" : CommandFList,
+                          "waves" : CommandWaves,
                           "upload" : CommandUploadVivado, },
     'dep_sub' : [ [ r'csr\@(\w+)\.txt', r'\1.sv@csrgen,\1.txt $root_dir/v_csr_regs_deps'], ],
     # TODO: I don't think we want file_order stuff.  Anyway how do you handle a package pulling in another package.
@@ -720,9 +801,31 @@ config = {
     'vars' : { 'root_dir' : os.path.abspath(os.getcwd()) },
 }
 
-def usage():
-    print("")
-    print("Usage: eda <command> <options> <targets>")
+def usage(tokens = []):
+    if len(tokens)==0:
+        print(
+"""
+    Usage: eda <command> <options> <targets>
+
+    Where <command> is one of:
+
+    sim          - Simulates a target
+    waves        - Opens waveform from prior simulation
+    elab         - Elaborates a target (sort of sim based LINT)
+    synth        - Synthesizes a target
+    flist        - Create dependency list of a target
+    upload       - Uploads a finished design into hardware
+    help         - This help (without args), or i.e. "eda help sim" for specific help
+""")
+    elif tokens[0] in config['command_handler']:
+        sco = config['command_handler'][tokens[0]](config) # sub command object
+        sco.help()
+        sys.exit(0)
+    else:
+        util.info(f"Valid commands are: ")
+        for k in sorted(config['command_handler'].keys()):
+            util.info(f"   {k:20}")
+        util.error(f"Cannot provide help, don't understand command: '{tokens[0]}'")
 
 def interactive():
     read_file = False
@@ -757,7 +860,7 @@ def process_tokens(tokens):
         if ((token == 'help') or (token == 'h') or
             (token == '-help') or (token == '-h') or
             (token == '--help') or (token == '--h')):
-            usage()
+            usage(tokens)
             exit(0)
         if util.process_token(token): # see if eda_util needs to process this (printing related)
             continue
@@ -815,3 +918,10 @@ if __name__ == "__main__":
 # * add synth
 # * create xdc on the fly via command line or DEPS target settings (setting vars other than defines in the DEPs?)
 # * start meda at this point, focus is N jobs on M cores, for sweeping and regressions (sweep will use xdc-on-the-fly stuff)
+
+# IDEAS:
+# * options with no default (i.e. if user doesn't override, THEN we set it, like "seed" or "work-dir") can be given a
+#   special type (DefaultVar) versus saying "None" so that help can say more about it (it's a string, it's default val
+#   is X, etc) and it can be queried as to whether it's really a default val.  This avoids having to avoid default vals
+#   that user can never set (-1, None, etc) which make it hard to infer the type.  this same object can be given help
+#   info and simply "render" to the expected type (str, integer, etc) when used.

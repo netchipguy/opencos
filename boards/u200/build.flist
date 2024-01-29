@@ -1,4 +1,0 @@
-oc_set_project_define 'OC_SEED=1706085385'
-oc_set_project_define SYNTHESIS
-add_files -norecurse /home/simon/opencos/boards/u200/oc_chip_top.sv
-add_files -norecurse /home/simon/opencos/top/oc_cos.sv

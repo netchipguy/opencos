@@ -1,0 +1,4 @@
+
+ocsim_clock: ocsim_clock.sv
+
+ocsim_reset: ocsim_reset.sv

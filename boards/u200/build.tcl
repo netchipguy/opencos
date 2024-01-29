@@ -1,36 +1,51 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
-# ********************************
-# create a blank project
-# ********************************
+set tt "# ********************************"
+set tt "# create a blank project"
+set tt "# ********************************"
+
 create_project u200 project -force
 
-# ********************************
-# read in OC Vivado helper TCL
-# ********************************
+set tt "# ********************************"
+set tt "# read in OC Vivado helper TCL"
+set tt "# ********************************"
+
 source "[pwd]/../vendors/xilinx/oc_vivado.tcl" -notrace
 
-# ********************************
-# setup the board and part type
-# ********************************
+set tt "# ********************************"
+set tt "# setup the board and part type"
+set tt "# ********************************"
+
 set_property BOARD_PART_REPO_PATHS "[pwd]/board" [current_project]
 set_property board_part xilinx.com:au200:part0:1.2 [current_project]
 
-# ********************************
-# setup the include dirs to OC normalized paths (+incdir+<oc_root>, everything else relative to there))
-# ********************************
+set tt "# ********************************"
+set tt "# setup the include dirs to OC normalized paths (+incdir+<oc_root>, everything else relative to there))"
+set tt "# ********************************"
+
+# should get these from eda flist probably, what if there are other incdirs we need?
+# prob should add a function like oc_set_project_define, so that we are consistent in style and always get all filesets
 set_property include_dirs $oc_root [current_fileset]
 set_property include_dirs $oc_root [get_filesets sim_1]
 
-oc_set_project_define "OC_BOARD_TOP_DEBUG"
-
-# ********************************
-# add top level design files
-# ********************************
+set tt "# ********************************"
+set tt "# add top level design files"
+set tt "# ********************************"
 
 # leverage eda to generate an flist for everything under oc_chip_top
+# TBD: does this same call get userspace app?  how?
+# TBD: think about whether this is the right way to go, or whether "eda build" should build flist then run this script.
+#      that approach would enable multiple targets in DEPS that build various flavors of the board, a convenient way
+#      to distribute a bunch of preconfigured boards (i.e. various self-tests, example apps, etc)
+# TBD: another way would be to have eda build command which can take direction via DEPS to launch a TCL and build a command
+#      line for it.  Can this be 
 exec python ${oc_root}/bin/eda flist oc_chip_top --out "[pwd]/build.flist" --force \
+    +define+SYNTHESIS \
+    +define+OC_LIBRARY_XILINX \
+    +define+OC_BOARD_TOP_DEBUG \
+    +define+OC_UART_CONTROL_INCLUDE_VIO_DEBUG \
+    +define+OC_UART_CONTROL_INCLUDE_ILA_DEBUG \
     --no-emit-incdir \
     --prefix-define "oc_set_project_define " \
     --prefix-sv "add_files -norecurse " \
@@ -40,9 +55,9 @@ exec python ${oc_root}/bin/eda flist oc_chip_top --out "[pwd]/build.flist" --for
 source build.flist
 
 
-# ********************************
-# add top level constraint files
-# ********************************
+set tt "# ********************************"
+set tt "# add top level constraint files"
+set tt "# ********************************"
 
 add_files -fileset constrs_1 -norecurse "$oc_root/boards/vendors/xilinx/oc_vivado.tcl"
 set_property PROCESSING_ORDER EARLY [get_files -all "$oc_root/boards/vendors/xilinx/oc_vivado.tcl"]
@@ -52,39 +67,19 @@ add_files -fileset constrs_1 -norecurse "[pwd]/oc_board_constraints.tcl"
 # TEMP -- enable synth debug
 set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} -value -debug_log -objects [get_runs synth_1]
 
-# ********************************
-# create required IP
-# ********************************
+set tt "# ********************************"
+set tt "# create required IP"
+set tt "# ********************************"
 
-set ip_name "xip_vio_i32_o32"
-set xci_file "${oc_projdir}/${oc_projname}.srcs/sources_1/ip/${ip_name}/${ip_name}.xci"
-create_ip -name vio -vendor xilinx.com -library ip -version 3.0 -module_name $ip_name
-set_property -dict [list \
-  CONFIG.C_PROBE_IN0_WIDTH {32} \
-  CONFIG.C_PROBE_OUT0_WIDTH {32} \
-  CONFIG.Component_Name {$ip_name} \
-] [get_ips $ip_name]
-generate_target {all} [get_files "$xci_file"]
-export_ip_user_files -of_objects [get_files "$xci_file"] -no_script -sync -force -quiet
-create_ip_run [get_files -of_objects [get_fileset sources_1] "$xci_file"]
-launch_runs ${ip_name}_synth_1 -jobs 6
-# should perhaps create a list of IPs and wait on them all :)
-wait_on_run ${ip_name}_synth_1
-# and then I guess export them all, should check how long this takes, and the size, maybe we don't want to build everything every time...
-export_simulation -of_objects [get_files "$xci_file"] \
-    -directory "${oc_projdir}/${oc_projname}.ip_user_files/sim_scripts" \
-    -ip_user_files_dir "${oc_projdir}/${oc_projname}.ip_user_files" \
-    -ipstatic_source_dir "${oc_projdir}/${oc_projname}.ip_user_files/ipstatic" \
-    -lib_map_path [list {"modelsim=${oc_projdir}/${oc_projname}.cache/compile_simlib/modelsim"} \
-                       {"questa=${oc_projdir}/${oc_projname}.cache/compile_simlib/questa"} \
-                       {"xcelium=${oc_projdir}/${oc_projname}.cache/compile_simlib/xcelium"} \
-                       {"vcs=${oc_projdir}/${oc_projname}.cache/compile_simlib/vcs"} \
-                       {"riviera=${oc_projdir}/${oc_projname}.cache/compile_simlib/riviera"}] \
-    -use_ip_compiled_libs -force -quiet
+config_ip_cache -use_cache_location ${oc_root}/boards/ip_cache
 
-# ********************************
-# finally, implement the design
-# ********************************
+source ${oc_root}/boards/vendors/xilinx/xip_vio_i32_o32.tcl
+source ${oc_root}/boards/vendors/xilinx/xip_ila_d1024_i128_t32.tcl
+source ${oc_root}/boards/vendors/xilinx/xip_ila_d8192_i128_t32.tcl
+
+set tt "# ********************************"
+set tt "# SYNTH design"
+set tt "# ********************************"
 
 reset_run synth_1
 launch_runs synth_1 -jobs 6
@@ -93,11 +88,29 @@ if {[get_property PROGRESS [get_runs synth_1]] != "100%"} {
     error "ERROR: synth_1 failed"
 }
 
+set tt "# ********************************"
+set tt "# IMPLEMENT design"
+set tt "# ********************************"
+
 launch_runs impl_1 -jobs 6
 wait_on_run impl_1
 if {[get_property PROGRESS [get_runs impl_1]] != "100%"} {
     error "ERROR: impl_1 failed"
 }
 
-launch_runs impl_1 -to_step write_bitstream -jobs 6
-wait_on_run impl_1
+set tt "# ********************************"
+set tt "# Create reports"
+set tt "# ********************************"
+
+open_checkpoint "project/u200.runs/impl_1/oc_chip_top_routed.dcp"
+
+report_route_status 
+report_timing
+report_utilization
+
+set tt "# ********************************"
+set tt "# Create bitstream"
+set tt "# ********************************"
+
+write_bitstream -force "project/u200.runs/impl_1/oc_chip_top.bit"
+

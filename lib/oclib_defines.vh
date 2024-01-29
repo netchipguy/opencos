@@ -24,6 +24,7 @@
   `define OC_ANNOUNCE_PARAM_INTEGER(p) $display("%m: ANNOUNCE param %-20s = %0d", `OC_STRINGIFY(p), p);
   `define OC_ANNOUNCE_PARAM_BIT(p) $display("%m: ANNOUNCE param %-20s = %x", `OC_STRINGIFY(p), p);
   `define OC_ANNOUNCE_PARAM_REAL(p) $display("%m: ANNOUNCE param %-20s = %.3f", `OC_STRINGIFY(p), p);
+  `define OC_ANNOUNCE_PARAM_REALTIME(p) $display("%m: ANNOUNCE param %-20s = %.3fns", `OC_STRINGIFY(p), p/1ns);
 
 // *****************************************************************************************
 // ******** ASSERTIONS
@@ -315,5 +316,47 @@
   `define OC_LOCALPARAM_SAFE(m) localparam integer m``Safe = (m ? m : 1)
 
   `define OC_RAND_PERCENT(p) ((({$random}%100) < p) ? 1'b1 : 1'b0)
+
+// *****************************************************************************************
+// ******** VENDOR RELATED
+// *****************************************************************************************
+
+// We really don't want to put too much in here, it's messy, but in some cases a library
+// just doesn't work.  The first example is VIO (Xilinx debug IP) which has special hooks
+// in the flow that grab signal names from the connected ports.  If we wrap this in an
+// "oclib_debug_vio" wrapper (like we'd do for a RAM or synchronizer) then we'll just see
+// the names of the nets inside "oclib_debug_vio" on our nice debug GUI.  So we could just
+// embed Xilinx-specific code everywhere, or put it here in one place.
+
+// That being said this should be moved into a "vendor defines" file.
+
+  `define OC_DEBUG_VIO(inst, clock, i_width, o_width, i_signals, o_signals) \
+  `undef OC_DEBUG_VIO_DONE_``inst \
+  `ifdef OC_LIBRARY_XILINX \
+    `ifndef SIMULATION \
+       logic [i_width-1 : $bits({ i_signals }) ] inst``_dummy_i = '0; \
+       logic [o_width-1 : $bits({ o_signals }) ] inst``_dummy_o; \
+       xip_vio_i``i_width``_o``o_width`` inst (\
+          .clk( clock ),\
+          .probe_in0 ( { inst``_dummy_i , i_signals } ),\
+          .probe_out0( { inst``_dummy_o , o_signals } ) );\
+      `define OC_DEBUG_VIO_DONE_``inst \
+    `endif \
+  `endif \
+  `ifndef OC_DEBUG_VIO_DONE_``inst \
+       assign o_signals = '0; \
+  `endif
+
+  `define OC_DEBUG_ILA(inst, clock, depth, i_width, t_width, i_signals, t_signals) \
+  `ifdef OC_LIBRARY_XILINX \
+    `ifndef SIMULATION \
+       logic [i_width-1 : $bits({ i_signals }) ] inst``_dummy_i = '0; \
+       logic [t_width-1 : $bits({ t_signals }) ] inst``_dummy_t = '0; \
+       xip_ila_d``depth``_i``i_width``_t``t_width inst (\
+          .clk( clock ),\
+          .probe0( { inst``_dummy_i , i_signals } ),\
+          .probe1( { inst``_dummy_t , t_signals } ) );\
+    `endif \
+  `endif
 
 `endif //  `ifndef __OCLIB_DEFINES_VH

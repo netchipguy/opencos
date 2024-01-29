@@ -1,3 +1,15 @@
 
 oc_cos:
         oc_cos.sv
+        oc_uart_control
+        oc_chip_status
+        ../lib/oclib_reset
+
+oc_uart_control:
+        oc_uart_control.sv
+        ../lib/oclib_uart
+        ../lib/oclib_pulse_stretcher
+
+oc_chip_status:
+        oc_chip_status.sv
+                ../lib/oclib_synchronizer

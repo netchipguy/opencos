@@ -12,9 +12,9 @@ package oc_top_pkg;
   // 200-299         PLL Clocks
   // ********************
 
-  parameter integer ClockIdSingleEndedRefBase = 0;
-  parameter integer ClockIdDifferentialRefBase = 100;
-  parameter integer ClockIdPllBase = 200;
+  localparam integer ClockIdSingleEndedRefBase = 0;
+  localparam integer ClockIdDifferentialRefBase = 100;
+  localparam integer ClockIdPllBase = 200;
 
   function integer ClockIdSingleEndedRef(input int i);
     return ClockIdSingleEndedRefBase + i;
