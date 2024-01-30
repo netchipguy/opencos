@@ -1,0 +1,6 @@
+
+oc_chip_status_test:
+        oc_chip_status_test.sv
+        ../oc_chip_status
+        ../../sim/ocsim_clock
+        ../../sim/ocsim_reset
