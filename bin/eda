@@ -609,6 +609,38 @@ class CommandElabVivado(CommandSimVivado):
         # add args specific to this simulator
         self.stop_after_compile = True
 
+class ToolVivado:
+    def __init__(self):
+        self.vivado_year = None
+        self.vivado_release = None
+        self.args['xilinx'] = False
+        self.args['part'] = "xcu200-fsgd2104-2-e"
+        self.args['board'] = "xcu200"
+
+    def get_versions(self):
+        if self.vivado_year != None:
+            return
+        vivado_path = shutil.which('vivado')
+        if vivado_path == None:
+            util.error("Vivado not in path, need to setup (i.e. source /opt/Xilinx/Vivado/2022.2/settings64.sh")
+        util.debug("vivado_path = %s" % vivado_path)
+        m = re.search(r'(\d\d\d\d)\.(\d+)', vivado_path)
+        if m:
+            self.vivado_year = int(m.group(1))
+            self.vivado_release = int(m.group(2))
+            return
+        util.error("Vivado path doesn't specificy version, expecting (dddd.dd)")
+
+    def set_tool_defines(self):
+        # Will only be called from an object which also inherits from CommandDesign, i.e. has self.defines
+        self.get_versions()
+        self.defines['OC_TOOL_VIVADO'] = None
+        self.defines['OC_TOOL_VIVADO_%4d_%d' % (self.vivado_year, self.vivado_release)] = None
+        if self.args['xilinx']:
+            self.defines['OC_LIBRARY_ULTRASCALE_PLUS'] = None
+        else:
+            self.defines['OC_LIBRARY_BEHAVIORAL'] = None
+
 class CommandSynthVivado(CommandSynth, ToolVivado):
     def __init__(self, config):
         CommandSynth.__init__(self, config)
@@ -783,6 +815,114 @@ class CommandUploadVivado(CommandUpload, ToolVivado):
             command_line.append('batch')
         self.exec(self.args['work-dir'], command_list)
 
+class ToolQuesta:
+    def __init__(self):
+        self.questa_major = None
+        self.questa_minor = None
+        self.args['xilinx'] = False
+        self.args['part'] = "xcu200-fsgd2104-2-e"
+        self.args['board'] = "xcu200"
+
+    def get_versions(self):
+        if self.questa_major != None:
+            return
+        qrun_path = shutil.which('qrun')
+        if qrun_path == None:
+            util.error("qrun not in path, need to setup (i.e. source /opt/intelFPGA_pro/23.4/settings64.sh")
+        util.debug("qrun_path = %s" % qrun_path)
+        m = re.search(r'(\d+)\.(\d+)', qrun_path)
+        if m:
+            self.questa_minor = int(m.group(1))
+            self.questa_major = int(m.group(2))
+            return
+        util.error("Questa path doesn't specificy version, expecting (d+.d+)")
+
+    def set_tool_defines(self):
+        # Will only be called from an object which also inherits from CommandDesign, i.e. has self.defines
+        self.get_versions()
+        self.defines['OC_TOOL_QUESTA'] = None
+        self.defines['OC_TOOL_QUESTA_%d_%d' % (self.questa_major, self.questa_minor)] = None
+        if self.args['xilinx']:
+            self.defines['OC_LIBRARY_ULTRASCALE_PLUS'] = None
+        else:
+            self.defines['OC_LIBRARY_BEHAVIORAL'] = None
+
+class CommandSimQuesta(CommandSim, ToolQuesta):
+    def __init__(self, config):
+        CommandSim.__init__(self, config)
+        ToolQuesta.__init__(self)
+        # add args specific to this simulator
+        self.args['gui'] = False
+        self.args['tcl-file'] = "sim.tcl"
+
+    def do_it(self):
+        # add defines for this job
+        self.set_tool_defines()
+
+        # it all gets done with one command
+        command_list = [ 'qrun', "-64", "-sv" ]
+
+        # incdirs
+        for value in self.incdirs:
+            command_list += [ f"+incdir+{value}" ]
+
+        # defines
+        for key in self.defines.keys():
+            value = self.defines[key]
+            if value == None:
+                command_list += [ f"+define+{key}" ]
+            else:
+                command_list += [ f"\'+define+{key}={value}\'" ]
+
+        # compile verilog
+        for f in self.files_v:
+            command_list += [ f ]
+
+        # compile systemverilog
+        for f in self.files_sv:
+            command_list += [ f ]
+
+        if self.args['xilinx']:
+            command_list += [ os.path.join( os.environ['XILINX_VIVADO'], 'data/verilog/src/glbl.v') ]
+
+        # misc options
+        command_list += [ '-top', self.args['top'], '-timescale', '1ns/1ps', '-work', 'work.lib']
+        if self.args['gui'] and self.args['waves']: command_list += ['-debug', 'all']
+        elif self.args['gui']: command_list += ['-debug', 'typical']
+        elif self.args['waves']: command_list += ['-debug', 'wave']
+        if util.args['verbose']: command_list += ['-verbose']
+        if self.args['xilinx']:
+            command_list += "-L xil_defaultlib -L unisims_ver -L unimacro_ver -L xpm -L secureip -L xilinx_vip".split(" ")
+            command_list += ['glbl']
+
+        # check if we're bailing out early
+        if self.stop_after_compile:
+            command_list += ['-elab', 'elab.output', '-do', '"quit"' ]
+
+        # execute snapshot
+        if self.args['gui']: command_list += ['-gui=interactive']
+        self.exec(self.args['work-dir'], command_list)
+
+        #temp
+        return
+
+        # create TCL -- move this up
+        tcl_name = os.path.abspath(os.path.join(self.args['work-dir'], self.args['tcl-file']))
+        with open( tcl_name, 'w' ) as fo:
+            if self.args['waves']:
+                if self.args['waves-start']:
+                    print("run %d ns" % self.args['waves-start'], file=fo)
+                print("log_wave -recursive *", file=fo)
+            print("run -all", file=fo)
+            if not self.args['gui']:
+                print("exit", file=fo)
+
+class CommandElabQuesta(CommandSimQuesta):
+    def __init__(self, config):
+        CommandSimQuesta.__init__(self, config)
+        # add args specific to this simulator
+        self.stop_after_compile = True
+
 # ****************************************************************************************************
 # MAIN
 
@@ -867,6 +1007,8 @@ def process_tokens(tokens):
         if token == 'bind':
             if len(tokens) < 2: util.error("Need two arguments after 'bind'")
             exec("config['command_handler']['%s'] = %s" % (tokens[0], tokens[1]))
+            tokens.pop(0)
+            tokens.pop(0)
             continue
         if token in config['command_handler']:
             if (command != ""): util.error(f"Got command '{token}' after already being given '{command}'")
