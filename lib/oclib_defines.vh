@@ -139,12 +139,12 @@
 
   `define OC_ERROR(str) \
   `ifdef SIMULATION \
-  do $display("%t %m: ERROR: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); $finish; while (0) \
+  do begin $display("%t %m: ERROR: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); $finish; end while (0) \
   `endif
 
   `define OC_WARNING(str) \
   `ifdef SIMULATION \
-  do $display("%t %m: WARNING: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); while (0) \
+  do begin $display("%t %m: WARNING: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); end while (0) \
   `endif
 
 // STATIC_ERROR / STATIC_WARNING - operate outside begin/end blocks, i.e. "instantiated"
@@ -314,8 +314,6 @@
 // *****************************************************************************************
 
   `define OC_LOCALPARAM_SAFE(m) localparam integer m``Safe = (m ? m : 1)
-
-  `define OC_RAND_PERCENT(p) ((({$random}%100) < p) ? 1'b1 : 1'b0)
 
 // *****************************************************************************************
 // ******** VENDOR RELATED

@@ -3,7 +3,7 @@ oclib_uart:
         oclib_uart.sv
         oclib_uart_rx
         oclib_uart_tx
-        oclib_bc_adapter
+        oclib_bc_bidi_adapter
         oclib_synchronizer
 
 oclib_uart_rx:
@@ -17,8 +17,45 @@ oclib_uart_tx:
 oclib_debounce:
         oclib_debounce.sv
 
-oclib_bc_adapter:
-        oclib_bc_adapter.sv
+oclib_ready_valid_retime:
+        oclib_ready_valid_retime.sv
+        oclib_synchronizer
+        oclib_pipeline
+
+oclib_ready_valid_pipeline:
+        oclib_ready_valid_pipeline.sv
+        oclib_ready_valid_retime
+        oclib_synchronizer
+        oclib_pipeline
+
+oclib_bc_bidi_adapter:
+        oclib_bc_bidi_adapter.sv
+        oclib_ready_valid_pipeline
+        oclib_ready_valid_to_async_req_ack
+        oclib_async_req_ack_to_ready_valid
+        oclib_ready_valid_to_async_serial
+        oclib_async_serial_to_ready_valid
+        oclib_synchronizer
 
 oclib_fifo:
         oclib_fifo.sv
+
+oclib_ready_valid_to_async_req_ack:
+        oclib_ready_valid_to_async_req_ack.sv
+        oclib_synchronizer
+        oclib_pipeline
+
+oclib_async_req_ack_to_ready_valid:
+        oclib_async_req_ack_to_ready_valid.sv
+        oclib_synchronizer
+        oclib_pipeline
+
+oclib_ready_valid_to_async_serial:
+        oclib_ready_valid_to_async_serial.sv
+        oclib_synchronizer
+        oclib_pipeline
+
+oclib_async_serial_to_ready_valid:
+        oclib_async_serial_to_ready_valid.sv
+        oclib_synchronizer
+        oclib_pipeline

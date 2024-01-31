@@ -46,7 +46,7 @@ module oc_uart_control
 
   oclib_pkg::bc_8b_bidi_s bcFromUart, bcToUart;
 
-  oclib_bc_adapter #(.BcTypeA(BcType), .BcTypeB(oclib_pkg::bc_8b_bidi_s))
+  oclib_bc_bidi_adapter #(.BcTypeA(BcType), .BcTypeB(oclib_pkg::bc_8b_bidi_s))
   uBC_ADAPTER (.clock(clock), .reset(resetQ),
                .aIn(bcRx), .aOut(bcTx),
                .bOut(bcFromUart), .bIn(bcToUart));

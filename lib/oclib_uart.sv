@@ -49,7 +49,7 @@ module oclib_uart #(
   uRX (.clock(clock), .reset(resetQ), .error(error), .rx(rx),
        .rxData(bcFromUart.data), .rxValid(bcFromUart.valid), .rxReady(bcToUart.ready));
 
-  oclib_bc_adapter #(.BcTypeA(BcType), .BcTypeB(oclib_pkg::bc_8b_bidi_s))
+  oclib_bc_bidi_adapter #(.BcTypeA(BcType), .BcTypeB(oclib_pkg::bc_8b_bidi_s))
   uBC (.clock(clock), .reset(resetQ),
        .aIn(bcIn), .aOut(bcOut),
        .bIn(bcFromUart), .bOut(bcToUart));
