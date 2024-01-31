@@ -34,7 +34,7 @@ module oclib_bc_bidi_adapter_test;
     uSOURCE_S9.SetDataContents(ocsim_pkg::DataTypeRandom);
     uSOURCE_S9.SetDutyCycle(60);
     uSOURCE_S9.Start();
-    repeat (1000) @(posedge clock);
+    repeat (1000000) @(posedge clock);
     uSOURCE_S0.Stop();
     uSOURCE_S9.Stop();
     uSINK_S0.WaitForIdle();

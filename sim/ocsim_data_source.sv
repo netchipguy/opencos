@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 `include "sim/ocsim_pkg.sv"
+`include "sim/ocsim_defines.vh"
+`include "lib/oclib_defines.vh"
 
 module ocsim_data_source
   #(

@@ -1,6 +1,13 @@
 eda.work
 *~
 __pycache__
+
+# Vivado junk
 vivado*.jou
 vivado*.log
 vivado_pid*.str
+
+# Questa junk
+qrun.log
+qrun.out
+tests/work

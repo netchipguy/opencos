@@ -22,7 +22,7 @@ module oclib_bc_bidi_adapter
    );
 
   if (type(BcTypeA) == type(BcTypeB)) begin : NOCONV
-    if ((BufferStages == 0) || (type(BcTypeA) == type(bc_async_8b_bidi_s))) begin : NOBUFF
+    if ((BufferStages == 0) || (type(BcTypeA) == type(oclib_pkg::bc_async_8b_bidi_s))) begin : NOBUFF
       assign bOut = aIn;
       assign aOut = bIn;
     end
