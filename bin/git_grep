@@ -1,0 +1,229 @@
+#!/usr/bin/perl
+
+my @searches = ();
+my $replace = undef;
+my $casesmart = 0;
+my $partial = 0;
+my $really = 0;
+my $smartpad = 0;
+my $local = 0;
+my %ignores = {};
+
+if (scalar(@ARGV) eq 0) { usage(); }
+
+while (@ARGV) {
+    my $arg = shift(@ARGV);
+    if ($arg eq "-r") { 
+        my $next_arg = shift(@ARGV);
+        if (not defined $next_arg) { my_error("Need arg after $arg"); }
+        $replace = $next_arg; 
+    }
+    elsif ($arg eq "-i") {
+        my $next_arg = shift(@ARGV);
+        if (not defined $next_arg) { my_error("Need arg after $arg"); }
+        $ignores{$next_arg} = undef; 
+    }
+    elsif ($arg eq "-c") { $casesmart = 1; }
+    elsif ($arg eq "-p") { $partial = 1; }
+    elsif ($arg eq "-s") { $smartpad = 1; }
+    elsif ($arg eq "-l") { $local = 1; }
+    elsif ($arg eq "-really") { $really = 1; }
+    elsif ($arg =~ "-h") { usage(); }
+    else { push(@searches, $arg); }
+}
+
+if (scalar(@searches) eq 0) { my_error("Need a search phrase"); }
+if ((scalar(@searches) > 1) and defined $replace) { my_error("Can only do replacement on a single search phrase"); }
+
+my $now = length($replace);
+my $need = 0;
+
+if (not $partial) { 
+    for (my $i=0; $i<scalar(@searches); $i++) {
+        $need = length($searches[$i]);
+        my $prefix = (($searches[$i] =~ /^\w/) ? "\\b" : ""); # prefix \b if expr starts with a word character
+        my $suffix = (($searches[$i] =~ /\w$/) ? "\\b" : ""); # suffix \b if expr ends with a word character
+        $searches[$i] = $prefix.quotemeta($searches[$i]).$suffix;
+    }
+}
+
+my $search = join('|', @searches);
+if ($casesmart) {
+    $search = lc($search);
+}
+
+my $root_dir = ($local ? "." : get_root_dir());
+if (not defined $root_dir) { my_error("Couldn't find root of repo"); }
+
+print "* Searching \"$root_dir\" for \"$search\"...\n";
+if (defined $replace) {
+    if ($really) { print "- Really making changes...\n"; }
+    else { print "- Preview mode, add -really to actually make below changes...\n"; }
+}
+
+my $padding = "";
+if ($smartpad and defined $replace) {
+    while ($now < $need) {
+        $padding .= " ";
+        $now++;
+    }
+}
+
+do_dir($root_dir);
+
+print "* Done.  Have a nice day.\n";
+exit;
+
+sub do_dir {
+    my ($path) = @_;
+    if (not -d $path) { my_error("do_dir: $path is not a dir"); }
+    opendir(my $dh, $path) or my_error("Can't opendir $path");
+    while (readdir $dh) {
+        if (($_ eq ".") or ($_ eq "..")) { next; }
+        my $iter = "$path/$_";
+        if ((exists $ignores{$_}) or (exists $ignores{$iter})) {}
+        elsif (-f $iter) { do_file($iter); }
+        elsif (-d $iter) { do_dir($iter); }
+    }
+    closedir $dh;
+}
+
+sub do_file {
+    my ($path) = @_;
+    if (not -f $path) { my_error("do_file: $path is not a file"); }
+    if (not (($path =~ /\.sv$/) or ($path =~ /\.v$/) or ($path =~ /\.vh$/) or
+             ($path =~ /\.vhd$/) or ($path =~ /\.c$/) or ($path =~ /\.h$/) or
+             ($path =~ /\.xpr$/) or ($path =~ /\.xdc$/) or ($path =~ /\.cpp$/) or
+             ($path =~ /\.pro$/) or ($path =~ /\.ui$/) or ($path =~ /\.sh$/) or
+             ($path =~ /\.py$/) or ($path =~ /\.pl$/) or ($path =~ /\.tcl$/) or
+             ($path =~ /\.sdc$/) or ($path =~ /_csr\.txt$/) or ($path =~ /DEPS$/))) { return; }
+    open(my $fh, $path) or my_error("Can't open $path");
+    my $line = 1;
+    my $found = 0;
+    while (<$fh>) {
+        if ($casesmart ?
+            (lc($_) =~ /$search/) :
+            ($_ =~ /$search/)) {
+            print "${path}:${line} :  $_";
+            $found = 1;
+        }
+        $line++;
+    }
+    close $fh;
+    if (defined $replace and $found) {
+        my $infh;
+        my $outfh;
+        if ($really) {
+            rename_file($path, $path.".orig");
+            open($infh, $path.".orig") or my_error("Can't open ${path}.orig for reading");
+            open($outfh, ">".$path) or my_error("Can't open ${path} for writing");
+        } else {
+            open($infh, $path) or my_error("Can't open ${path}.orig for reading");
+        }
+        my $line = 1;
+        while (<$infh>) {
+            my $text = $_;
+            if ($smartpad and ($text =~ /$search  \s*\S/)) {
+                $text =~ s/$search  /$replace  $padding/g;
+                print "${path}:${line} -> $text";
+            }
+            elsif ($text =~ /$search/) {
+                $text =~ s/$search/$replace/g;
+                print "${path}:${line} -> $text";
+            }
+            if ($really) { print $outfh $text; }
+            $line++;
+        }
+        close $infh;
+        if ($really) { close $outfh; }
+    }
+}
+
+
+sub rename_file {
+    my ($old, $new) = @_;
+    if (not -f $old) { my_error("rename_file: $old doesn't exist"); }
+    system("mv $old $new");
+}
+
+# ***********************************************************************************
+# Text output related functions
+# ***********************************************************************************
+
+sub print_green {
+    my ($text) = @_;
+    text_color("green");
+    print $text;
+    text_color("normal");
+}
+
+sub print_red {
+    my ($text) = @_;
+    text_color("red");
+    print $text;
+    text_color("normal");
+}
+
+sub text_color {
+    my ($color) = @_;
+    if (1) {
+        # now we're enabling "virtual terminal processing" in windows console, which responds to ANSI codes
+        # if ((platform() eq "linux") or (platform() eq "msys")) {
+	if ($color eq "red") { print "\e[31m"; }
+	if ($color eq "green") { print "\e[32m"; }
+	if ($color eq "normal") { print "\e[0m"; }
+    }
+    elsif (platform() eq "MSWin32") {
+	if ($color eq "red") { $platform_win32_console->Attr($FG_RED | ($platform_win32_default_attr&(240))); }
+	if ($color eq "green") { $platform_win32_console->Attr($FG_GREEN | ($platform_win32_default_attr&(240))); }
+	if ($color eq "normal") {$platform_win32_console->Attr($platform_win32_default_attr); }
+    }
+}
+
+sub my_error {
+    my ($text, $output) = @_;
+    if (not defined $text) { $text = "Internal Error"; }
+    if (defined $output) {
+        print_red("EDA ERROR: $text\nvvvvvvvvvv\n".$output."\n^^^^^^^^^^\nEDA ERROR: $text\n");
+    } else {
+        print_red("EDA ERROR: $text\n");
+    }
+    exit -1;
+}
+
+sub get_git {
+    if ($^O eq "MSWin32") {
+        return "git.exe";
+    }
+    return "git";
+}
+
+sub get_root_dir {
+    my ($warn) = @_;
+    my $git = get_git();
+    if (defined $git) {
+        my $root = `$git rev-parse --show-toplevel`;
+        chop($root);
+        if (-d $root) { return $root };
+        die("git 'rev-parse --show-toplevel' didn't return a valid path\n");
+    }
+    die("Unable to find git executable\n");
+}
+
+sub usage {
+    print <<EOF;
+
+git_grep <search_phrase> [<search_phrase> ...] [options] 
+
+Where [options] are: 
+    -r <replace_phrase>    Perform replace.  Only valid with single <search_phrase>
+    -c                     Case insensitive
+    -p                     Partial word match.  When not set, <search_phrase> expected to be a full word if it
+                           looks like one
+    -s                     Smart padding.  When set, will add extra spaces when replacing with a shorter
+                           expression, if followed by multiple space
+    -really                Really make changes with -r, without this it just gives a preview
+
+EOF
+    exit;
+}
