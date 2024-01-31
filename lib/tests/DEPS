@@ -1,0 +1,8 @@
+
+oclib_bc_bidi_adapter_test:
+        oclib_bc_bidi_adapter_test.sv
+        ../oclib_bc_bidi_adapter
+        ../../sim/ocsim_clock
+        ../../sim/ocsim_reset
+        ../../sim/ocsim_data_sink
+        ../../sim/ocsim_data_source
