@@ -4,29 +4,64 @@ oclib_uart:
         oclib_uart_rx
         oclib_uart_tx
         oclib_bc_bidi_adapter
-        oclib_synchronizer
+        oclib_module_reset
 
 oclib_uart_rx:
         oclib_uart_rx.sv
         oclib_debounce
+        oclib_fifo
+        oclib_module_reset
 
 oclib_uart_tx:
         oclib_uart_tx.sv
         oclib_fifo
+        oclib_module_reset
+
+oclib_pipeline:
+        oclib_pipeline.sv
+
+oclib_synchronizer:
+        oclib_synchronizer.sv
+
+oclib_module_reset:
+        oclib_module_reset.sv
+        oclib_synchronizer
+        oclib_pipeline
 
 oclib_debounce:
         oclib_debounce.sv
+        oclib_synchronizer
+        oclib_module_reset
 
 oclib_ready_valid_retime:
         oclib_ready_valid_retime.sv
-        oclib_synchronizer
-        oclib_pipeline
+        oclib_module_reset
 
 oclib_ready_valid_pipeline:
         oclib_ready_valid_pipeline.sv
         oclib_ready_valid_retime
         oclib_synchronizer
         oclib_pipeline
+
+oclib_ready_valid_to_async_req_ack:
+        oclib_ready_valid_to_async_req_ack.sv
+        oclib_module_reset
+        oclib_synchronizer
+
+oclib_async_req_ack_to_ready_valid:
+        oclib_async_req_ack_to_ready_valid.sv
+        oclib_module_reset
+        oclib_synchronizer
+
+oclib_ready_valid_to_async_serial:
+        oclib_ready_valid_to_async_serial.sv
+        oclib_module_reset
+        oclib_synchronizer
+
+oclib_async_serial_to_ready_valid:
+        oclib_async_serial_to_ready_valid.sv
+        oclib_module_reset
+        oclib_synchronizer
 
 oclib_bc_bidi_adapter:
         oclib_bc_bidi_adapter.sv
@@ -37,25 +72,75 @@ oclib_bc_bidi_adapter:
         oclib_async_serial_to_ready_valid
         oclib_synchronizer
 
+oclib_bc_tree_splitter:
+        oclib_bc_tree_splitter.sv
+        oclib_module_reset
+
+oclib_bc_to_word:
+        oclib_bc_to_word.sv
+        oclib_module_reset
+
+oclib_word_to_bc:
+        oclib_word_to_bc.sv
+        oclib_module_reset
+
+oclib_bc_bidi_to_words:
+        oclib_bc_bidi_to_words.sv
+        oclib_bc_bidi_adapter
+        oclib_bc_to_word
+        oclib_word_to_bc
+        oclib_module_reset
+
+oclib_bc_to_csr:
+        oclib_bc_to_csr.sv
+        oclib_bc_bidi_to_words
+        oclib_words_to_csr
+        oclib_module_reset
+
+oclib_words_to_csr:
+        oclib_words_to_csr.sv
+        oclib_module_reset
+
+oclib_csr_adapter:
+        oclib_csr_adapter.sv
+        oclib_bc_to_csr
+        oclib_csr_to_drp
+        oclib_csr_to_apb
+        oclib_csr_to_axil
+        oclib_module_reset
+        oclib_synchronizer
+
+oclib_csr_synchronizer:
+        oclib_csr_synchronizer.sv
+        oclib_module_reset
+        oclib_synchronizer
+
+oclib_csr_tree_splitter:
+        oclib_csr_tree_splitter.sv
+        oclib_bc_bidi_adapter
+        oclib_bc_tree_splitter
+        oclib_module_reset
+
+oclib_csr_check_selected:
+        oclib_csr_check_selected.sv
+
+oclib_csr_to_drp:
+        oclib_csr_to_drp.sv
+        oclib_csr_check_selected
+        oclib_module_reset
+        oclib_synchronizer
+
+oclib_csr_to_apb:
+        oclib_csr_to_apb.sv
+        oclib_csr_check_selected
+        oclib_module_reset
+        oclib_synchronizer
+
+oclib_csr_to_axil:
+        oclib_csr_to_axil.sv
+        oclib_csr_check_selected
+        oclib_module_reset
+        oclib_synchronizer
+
 oclib_fifo:
         oclib_fifo.sv
-
-oclib_ready_valid_to_async_req_ack:
-        oclib_ready_valid_to_async_req_ack.sv
-        oclib_synchronizer
-        oclib_pipeline
-
-oclib_async_req_ack_to_ready_valid:
-        oclib_async_req_ack_to_ready_valid.sv
-        oclib_synchronizer
-        oclib_pipeline
-
-oclib_ready_valid_to_async_serial:
-        oclib_ready_valid_to_async_serial.sv
-        oclib_synchronizer
-        oclib_pipeline
-
-oclib_async_serial_to_ready_valid:
-        oclib_async_serial_to_ready_valid.sv
-        oclib_synchronizer
-        oclib_pipeline

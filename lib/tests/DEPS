@@ -1,4 +1,8 @@
 
+# SPDX-License-Identifier: MPL-2.0
+
+#eda_multi ignore synth
+
 oclib_bc_bidi_adapter_test:
         oclib_bc_bidi_adapter_test.sv
         ../oclib_bc_bidi_adapter

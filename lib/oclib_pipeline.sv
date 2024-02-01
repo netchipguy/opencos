@@ -1,10 +1,13 @@
 
 // SPDX-License-Identifier: MPL-2.0
 
-module oclib_pipeline #(parameter Width = 1,
-                        parameter Length = 0,
-                        parameter DontTouch = 0,
-                        parameter NoShiftRegister = 0)
+`include "lib/oclib_pkg.sv"
+
+module oclib_pipeline #(parameter integer Width = 1,
+                        parameter integer Length = 0,
+                        parameter bit     DontTouch = oclib_pkg::False,
+                        parameter bit     NoShiftRegister = oclib_pkg::False
+                        )
   (
    input                    clock,
    input [Width-1:0]        in,

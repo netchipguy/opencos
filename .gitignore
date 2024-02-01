@@ -1,6 +1,8 @@
-eda.work
 *~
 __pycache__
+eda.work
+eda.log
+oc_test.*.log
 
 # Vivado junk
 vivado*.jou

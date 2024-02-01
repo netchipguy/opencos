@@ -23,39 +23,44 @@ module ocsim_data_sink
 
   task SetDutyCycle ( integer i );
     dutyCycle = i;
+    $display("%t %m: Setting sink duty cycle to %0d%%", $realtime, dutyCycle);
   endtask // SetDutyCycle
 
   task Start();
     running = 1;
+    $display("%t %m: Starting automatic traffic sink at %0d%% duty cycle", $realtime, dutyCycle);
   endtask // Start
 
   task Stop();
     running = 0;
+    $display("%t %m: Stopping automatic traffic sink", $realtime);
   endtask // Stop
 
   Type expectQ [$];
 
   task Expect(Type d);
-    expectQ.push_back(d);
     if (Verbose) $display("%t %m: Expecting data: %p", $realtime, d);
+    expectQ.push_back(d);
   endtask // Expect
 
-  task WaitForIdle( integer maxCycles = 10000 );
+  task ExpectMultiple(Type d [$]);
+    if (Verbose) $display("%t %m: Expecting %0d data items:", $realtime, d.size());
+    for (int i=0; i<d.size(); i++) Expect(d[i]);
+  endtask // ExpectMultiple
+
+  task WaitForIdle( input integer maxCycles = 10000 );
     int i;
     i = 0;
     $display("%t %m: Waiting for expectQ to empty (%0d cycles max)", $realtime, maxCycles);
-    while (expectQ.size() && (i < maxCycles)) begin
+    while (expectQ.size()) begin
       @(posedge clock);
       i = i + 1;
+      if (i > maxCycles) begin
+        `OC_ERROR($sformatf("expectQ still has %0d entries after waiting %0d cycles!", expectQ.size(), maxCycles));
+      end
     end
-    if (expectQ.size()) begin
-      `OC_ERROR($sformatf("expectQ still has %0d entries after waiting %0d cycles!", expectQ.size(), maxCycles));
-//      `OC_ERROR("expectQ still has entries after waiting max cycles!");
-    end
-    else begin
-      $display("%t %m: expectQ is empty (waited %0d cycles)", $realtime, i);
-    end
-  endtask
+    $display("%t %m: expectQ is empty (waited %0d cycles)", $realtime, i);
+  endtask // WaitForIdle
 
   Type d;
 

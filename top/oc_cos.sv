@@ -3,6 +3,7 @@
 
 `include "top/oc_top_pkg.sv"
 `include "lib/oclib_defines.vh"
+`include "lib/oclib_pkg.sv"
 
 module oc_cos
   #(

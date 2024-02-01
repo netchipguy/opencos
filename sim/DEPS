@@ -1,4 +1,8 @@
 
-ocsim_clock: ocsim_clock.sv
+# SPDX-License-Identifier: MPL-2.0
+
+#eda_multi ignore synth
+
+ocsim_clock: ocsim_clock.sv #eda_multi ignore sim
 
 ocsim_reset: ocsim_reset.sv

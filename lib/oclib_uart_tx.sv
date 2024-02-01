@@ -1,12 +1,18 @@
 
 // SPDX-License-Identifier: MPL-2.0
 
-module oclib_uart_tx #(
-                       parameter integer ClockHz = 100_000_000,
-                       parameter integer Baud = 115_200,
-                       parameter integer BaudCycles = (ClockHz / Baud),
-                       parameter integer FifoDepth = 32
-                     )
+`include "lib/oclib_pkg.sv"
+
+module oclib_uart_tx
+  #(
+    parameter integer ClockHz = 100_000_000,
+    parameter integer Baud = 115_200,
+    parameter integer BaudCycles = (ClockHz / Baud),
+    parameter integer FifoDepth = 32,
+    parameter integer SyncCycles = 3,
+    parameter bit     ResetSync = oclib_pkg::False,
+    parameter integer ResetPipeline = 0
+    )
   (
    input        clock,
    input        reset,
@@ -15,6 +21,11 @@ module oclib_uart_tx #(
    output logic txReady,
    output logic tx
    );
+
+  // synchronize/pipeline reset as needed
+  logic          resetSync;
+  oclib_module_reset #(.ResetSync(ResetSync), .SyncCycles(SyncCycles), .ResetPipeline(ResetPipeline))
+  uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
 
   localparam BaudCounterW = $clog2(BaudCycles);
 
@@ -28,12 +39,12 @@ module oclib_uart_tx #(
   logic                    fifoReady;
 
   oclib_fifo #(.Width(8), .Depth(FifoDepth))
-  uFIFO (.clock(clock), .reset(reset),
+  uFIFO (.clock(clock), .reset(resetSync),
          .inData(txData), .inValid(txValid), .inReady(txReady),
          .outData(fifoData), .outValid(fifoValid), .outReady(fifoReady));
 
   always @(posedge clock) begin
-    if (reset) begin
+    if (resetSync) begin
       tx <= 1'b1;
       fifoReady <= 1'b0;
       baudCounter <= '0;
@@ -74,7 +85,7 @@ module oclib_uart_tx #(
           end
         end
       endcase // case (state)
-    end
-  end
+    end // else: !if(resetSync)
+  end // always @ (posedge clock)
 
 endmodule // oclib_uart_tx

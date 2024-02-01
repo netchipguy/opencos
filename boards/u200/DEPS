@@ -2,3 +2,10 @@
 oc_chip_top:
         oc_chip_top.sv
         ../../top/oc_cos
+        # the xilinx tag is so that we can "eda sim oc_chip_top".  when build.tcl calls "eda flist" it will not
+        # appear in the FLIST in any way (+incdirs, +defines, files, etc) because the Vivado project will manage
+        # this for us (we consider adding --xilinx stuff to be a parameter to the TOOL like "eda sim", not a way
+        # to provide defines/incdirs, which would be handled via DEPS).  This is required here because chip_top
+        # directly instantiates Xilinx IP (I/O pads etc) without oclib wrappers, so it REQUIRES Xilinx libs, and
+        # since they exist outside OpenChip we can't put them into DEPS.  So we tell EDA to go find them...
+        --xilinx

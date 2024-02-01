@@ -3,10 +3,12 @@
 
 `include "lib/oclib_pkg.sv"
 
-module oclib_ready_valid_retime #(parameter integer Width = 1,
-                                  parameter bit     ResetSync = oclib_pkg::False,
-                                  parameter integer ResetPipeline = 0
-                                  )
+module oclib_ready_valid_retime
+  #(parameter integer Width = 1,
+    parameter integer SyncCycles = 3,
+    parameter bit     ResetSync = oclib_pkg::False,
+    parameter integer ResetPipeline = 0
+    )
   (
    input                    clock,
    input                    reset,
@@ -18,10 +20,10 @@ module oclib_ready_valid_retime #(parameter integer Width = 1,
    input                    outReady
    );
 
-  logic                         resetSync;
-  logic                         resetQ;
-  oclib_synchronizer #(.Enable(ResetSync)) uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
-  oclib_pipeline #(.Length(ResetPipeline)) uRESET_PIPE (.clock(clock), .in(resetSync), .out(resetQ));
+  // synchronize/pipeline reset as needed
+  logic          resetSync;
+  oclib_module_reset #(.ResetSync(ResetSync), .SyncCycles(SyncCycles), .ResetPipeline(ResetPipeline))
+  uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
 
   logic [Width-1:0]      firstData;
   logic                  firstValid;
@@ -29,7 +31,7 @@ module oclib_ready_valid_retime #(parameter integer Width = 1,
   logic                  secondValid;
 
   always_ff @(posedge clock) begin
-    if (resetQ) begin
+    if (resetSync) begin
       firstValid <= 1'b0;
       secondValid <= 1'b0;
     end

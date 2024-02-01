@@ -1,6 +1,23 @@
 
+# SPDX-License-Identifier: MPL-2.0
+
+#eda_multi ignore synth
+
 oc_chip_status_test:
         oc_chip_status_test.sv
         ../oc_chip_status
+        ../../sim/ocsim_clock
+        ../../sim/ocsim_reset
+
+oc_uart_control_test:
+        oc_uart_control_test.sv
+        ../oc_uart_control
+        ../oc_chip_status
+        ../../lib/oclib_csr_adapter
+        ../../lib/oclib_csr_tree_splitter
+        ../../lib/oclib_csr_array
+        ../../sim/ocsim_uart
+        ../../sim/ocsim_data_source
+        ../../sim/ocsim_data_sink
         ../../sim/ocsim_clock
         ../../sim/ocsim_reset

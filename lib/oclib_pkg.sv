@@ -2,12 +2,32 @@
 // SPDX-License-Identifier: MPL-2.0
 
 `ifndef __OCLIB_PKG
-`define __OCLIB_PKG
+  `define __OCLIB_PKG
+
+`include "lib/oclib_defines.vh"
 
 package oclib_pkg;
 
   localparam bit True = 1;
   localparam bit False = 0;
+
+  localparam byte ResetChar = "~";
+  localparam byte SyncChar = "|";
+
+  localparam integer DefaultCsrAlignment = 4;
+
+  function logic [7:0] HexToAsciiNibble (input [3:0] hex);
+    if (hex > 'd9) return "a" + (hex - 'd10);
+    else return "0" + hex;
+  endfunction
+
+  function logic [3:0] AsciiToHexNibble (input [7:0] ascii);
+    if ((ascii >= "0") && (ascii <= "9")) return (ascii - "0");
+    if ((ascii >= "a") && (ascii <= "f")) return (ascii - "a" + 10);
+    if ((ascii >= "A") && (ascii <= "F")) return (ascii - "A" + 10);
+    `OC_ERROR($sformatf("Cannot convert ASCII 0x%02x to hex nibble", ascii));
+  endfunction
+
 
   // ***********************************************************************************************
   // TOP INFO bus
@@ -20,6 +40,9 @@ package oclib_pkg;
     logic        halt;
     logic        error;
     logic        clear;
+    logic [7:0]  unlocked; // support for unlocking 8 separate functions
+    logic        thermalError;
+    logic        thermalWarning;
   } chip_status_s;
 
   typedef struct packed {
@@ -27,6 +50,11 @@ package oclib_pkg;
     logic        halt;
     logic        error;
   } chip_status_fb_s;
+
+  typedef struct packed {
+    logic        error;
+    logic        done;
+  } user_status_s;
 
   // ***********************************************************************************************
   // BYTE CHANNEL protocols
@@ -99,33 +127,319 @@ package oclib_pkg;
   // CSR protocols
   // ***********************************************************************************************
 
-  parameter CsrCommandW = 4;
-  parameter CsrSpaceW = 4;
-  parameter CsrBlockW = 32;
-  parameter CsrAddressW = 32;
-  parameter CsrDataW = 32;
-  parameter CsrStatusW = 8;
+  localparam CsrCommandRead = 8'h01;
+  localparam CsrCommandWrite = 8'h02;
+  localparam CsrCommandRead64 = 8'h11;
+  localparam CsrCommandWrite64 = 8'h12;
+  localparam CsrCommandStatus = 8'hfe;
+  localparam CsrCommandClear = 8'hff;
 
-  parameter CsrCommandRead = 4'h1;
-  parameter CsrCommandWrite = 4'h2;
-  parameter CsrCommandStatus = 4'he;
-  parameter CsrCommandClear = 4'hf;
+  localparam CsrStatusInvalidLength = 8'h01;
+  localparam CsrStatusInvalid64Bit  = 8'h02;
 
-  typedef struct packed {
+  localparam integer BcCsrOptionRequestHasToBlock = (1 << 0);
+  localparam integer BcCsrOptionRequestHasFromBlock = (1 << 1);
+  localparam integer BcCsrOptionResponseHasToBlock = (1 << 16);
+  localparam integer BcCsrOptionResponseHasFromBlock = (1 << 17);
+  localparam DefaultBcCsrOptions = (BcCsrOptionRequestHasToBlock + BcCsrOptionRequestHasFromBlock +
+                                   BcCsrOptionResponseHasToBlock + BcCsrOptionResponseHasFromBlock);
+
+  localparam [31:0] BcBlockIdAny = 32'hffff_ffff;
+  localparam [31:0] BcBlockIdUser = 32'h8000_0000;
+
+  localparam [3:0] BcSpaceIdAny = 4'hf;
+
+  function bit CommandIs64Bit ( input [7:0] csrCommand );
+    return ((csrCommand == CsrCommandRead64) || (csrCommand == CsrCommandWrite64));
+  endfunction // CommandIs64Bit
+
+  // SIMPLE PARALLEL CSR PROTOCOL
+
+  typedef struct   packed {
+    logic [31:0] toblock;
+    logic [31:0] fromblock;
+    logic [5:0]  reserved;
     logic        write;
     logic        read;
-    logic [CsrAddressW-1:0] block;
-    logic [CsrAddressW-1:0] address;
-    logic [CsrDataW-1:0]    wdata;
-  } csr_s;
+    logic [3:0]  space;
+    logic [3:0]  id;
+    logic [31:0] address;
+    logic [31:0] wdata;
+  } csr_32_noc_s;
 
   typedef struct packed {
-    logic [CsrDataW-1:0] rdata;
-    logic                ready;
-    logic                error;
-  } csr_fb_s;
+    logic [31:0] toblock;
+    logic [31:0] fromblock;
+    logic [5:0]  reserved;
+    logic        error;
+    logic        ready;
+    logic [31:0] rdata;
+  } csr_32_noc_fb_s;
+
+  typedef struct   packed {
+    logic [31:0] toblock;
+    logic [5:0]  reserved;
+    logic        write;
+    logic        read;
+    logic [3:0]  space;
+    logic [3:0]  id;
+    logic [31:0] address;
+    logic [31:0] wdata;
+  } csr_32_tree_s;
+
+  typedef struct packed {
+    logic [5:0]  reserved;
+    logic        error;
+    logic        ready;
+    logic [31:0] rdata;
+  } csr_32_tree_fb_s;
+
+ typedef struct packed {
+    logic [5:0]  reserved;
+    logic        write;
+    logic        read;
+    logic [3:0]  space;
+    logic [3:0]  id;
+    logic [31:0] address;
+    logic [31:0] wdata;
+  } csr_32_s;
+
+  typedef struct packed {
+    logic [5:0]  reserved;
+    logic        error;
+    logic        ready;
+    logic [31:0] rdata;
+  } csr_32_fb_s;
+
+  typedef struct packed {
+    logic [5:0]  reserved;
+    logic        write;
+    logic        read;
+    logic [3:0]  space;
+    logic [3:0]  id;
+    logic [63:0] address;
+    logic [63:0] wdata;
+  } csr_64_s;
+
+  typedef struct packed {
+    logic [5:0]  reserved;
+    logic        error;
+    logic        ready;
+    logic [63:0] rdata;
+  } csr_64_fb_s;
+
+  // DRP PROTOCOL (XILINX IP)
+
+  typedef struct packed {
+    logic        enable;
+    logic [15:0] address;
+    logic        write;
+    logic [15:0] wdata;
+  } drp_s;
+
+  typedef struct packed {
+    logic [15:0] rdata;
+    logic        ready;
+  } drp_fb_s;
+
+  // APB PROTOCOL (AXI PERIPHERAL BUS)
+
+  typedef struct packed {
+    logic        select;
+    logic        enable;
+    logic [31:0] address;
+    logic        write;
+    logic [31:0] wdata;
+  } apb_s;
+
+ typedef struct packed {
+    logic [31:0] rdata;
+    logic        ready;
+    logic        error;
+  } apb_fb_s;
+
+  // AXI-LITE 32-BIT PROTOCOL
+
+  typedef struct packed {
+    logic [31:0] awaddr;
+    logic        awvalid;
+    logic [31:0] araddr;
+    logic        arvalid;
+    logic [31:0] wdata;
+    logic [3:0]  wstrb;
+    logic        wvalid;
+    logic        rready;
+    logic        bready;
+  } axil_32_s;
+
+  typedef struct packed {
+    logic [31:0] rdata;
+    logic [1:0]  rresp;
+    logic        rvalid;
+    logic [1:0]  bresp;
+    logic        bvalid;
+    logic        awready;
+    logic        arready;
+    logic        wready;
+  } axil_32_fb_s;
+
+  // ***********************************************************************************************
+  // AXI3 PROTOCOL (currently used for HBM interfaces, which need to migrate to AXI4 below...)
+  // ***********************************************************************************************
+
+  localparam Axi3IdWidth = 6;
+  localparam Axi3AddressWidth = 33;
+  localparam Axi3DataWidth = 256;
+  localparam Axi3DataBytes = (Axi3DataWidth/8);
+
+  typedef struct packed {
+    logic [Axi3AddressWidth-1:0] addr;
+    logic [Axi3IdWidth-1:0]      id;
+    logic [1:0]                  burst;
+    logic [2:0]                  size;
+    logic [3:0]                  len;
+  } axi3_a_s;
+
+  typedef struct packed {
+    logic [Axi3DataBytes-1:0] [7:0] data;
+    logic [Axi3DataBytes-1:0]       strb;
+    logic                           last;
+  } axi3_w_s;
+
+  typedef struct packed {
+    logic [Axi3IdWidth-1:0]         id;
+    logic [Axi3DataBytes-1:0] [7:0] data;
+    logic [1:0]                     resp;
+    logic                           last;
+  } axi3_r_s;
+
+  typedef struct packed {
+    logic [Axi3IdWidth-1:0] id;
+    logic [1:0]             resp;
+  } axi3_b_s;
+
+  typedef struct packed {
+    axi3_a_s aw;
+    logic    awvalid;
+    axi3_a_s ar;
+    logic    arvalid;
+    axi3_w_s w;
+    logic    wvalid;
+    logic    rready;
+    logic    bready;
+  } axi3_s;
+
+  typedef struct packed {
+    axi3_r_s r;
+    logic    rvalid;
+    axi3_b_s b;
+    logic    bvalid;
+    logic    awready;
+    logic    arready;
+    logic    wready;
+  } axi3_fb_s;
+
+  // ***********************************************************************************************
+  // AXI4-MEMORY MAPPED PROTOCOL (typically used for Memory Interfaces)
+  // ***********************************************************************************************
+
+`define OC_LOCAL_AXI4MM_UNROLL(width) \
+ \
+  localparam Axi4M``width``IdWidth = 6; /* i.e. Axi4M256IdWidth */ \
+  localparam Axi4M``width``AddressWidth = 64; /* i.e. Axi4M256AddressWidth */ \
+  localparam Axi4M``width``DataBytes = (width / 8); /* i.e. Axi4M256DataBytes */ \
+ \
+  typedef struct packed { \
+    logic [Axi4M``width``AddressWidth-1:0]    addr; \
+    logic [Axi4M``width``IdWidth-1:0]         id; \
+    logic [1:0]                               burst; \
+    logic [2:0]                               prot; \
+    logic [2:0]                               size; \
+    logic [7:0]                               len; \
+    logic                                     lock; \
+    logic [3:0]                               cache; \
+  } axi4m_``width``_a_s; \
+ \
+  typedef struct packed { \
+    logic [Axi4M``width``DataBytes-1:0] [7:0] data; \
+    logic [Axi4M``width``DataBytes-1:0]       strb; \
+    logic                                     last; \
+  } axi4m_``width``_w_s; \
+ \
+  typedef struct packed { \
+    logic [Axi4M``width``IdWidth-1:0]         id; \
+    logic [Axi4M``width``DataBytes-1:0] [7:0] data; \
+    logic [1:0]                               resp; \
+    logic                                     last; \
+  } axi4m_``width``_r_s; \
+ \
+  typedef struct packed { \
+    logic [Axi4M``width``IdWidth-1:0]         id; \
+    logic [1:0]                               resp; \
+  } axi4m_``width``_b_s; \
+ \
+  typedef struct packed { \
+    axi4m_``width``_a_s                       aw; \
+    logic                                     awvalid; \
+    axi4m_``width``_a_s                       ar; \
+    logic                                     arvalid; \
+    axi4m_``width``_w_s                       w; \
+    logic                                     wvalid; \
+    logic                                     rready; \
+    logic                                     bready; \
+  } axi4m_``width``_s; \
+ \
+  typedef struct packed { \
+    axi4m_``width``_r_s                       r; \
+    logic                                     rvalid; \
+    axi4m_``width``_b_s                       b; \
+    logic                                     bvalid; \
+    logic                                     awready; \
+    logic                                     arready; \
+    logic                                     wready; \
+  } axi4m_``width``_fb_s;
+
+  `OC_LOCAL_AXI4MM_UNROLL(32)
+  `OC_LOCAL_AXI4MM_UNROLL(64)
+  `OC_LOCAL_AXI4MM_UNROLL(128)
+  `OC_LOCAL_AXI4MM_UNROLL(256)
+  `OC_LOCAL_AXI4MM_UNROLL(512)
+  `undef OC_LOCAL_AXI4MM_UNROLL
 
 
-endpackage
+  // ***********************************************************************************************
+  // AXI4-STREAM PROTOCOL (Ethernet MAC, etc)
+  // ***********************************************************************************************
+
+  // the "reset" signals could use some explanation.  Since AXI4ST is often used for MACs, which like
+  // to signal reset when the link is down, we carry this in the AXI bus.  RX side will drive the
+  // reset in parallel with the data, TX side will drive reset "backwards" to user on the _fb channel.
+
+ `define OC_LOCAL_AXI4ST_UNROLL(width) \
+ \
+  localparam Axi4St``width``DataBytes = (width / 8); /* i.e. Axi4St512DataBytes */ \
+ \
+  typedef struct packed { \
+    logic                                     tvalid; \
+    logic [Axi4M``width``DataBytes-1:0] [7:0] tdata; \
+    logic                                     tlast; \
+    logic [Axi4M``width``DataBytes-1:0]       tkeep; \
+    logic                                     tuser; \
+    logic                                     reset; \
+   } axi4st_``width``_s; \
+\
+  typedef struct packed { \
+    logic         tready; \
+    logic         reset; \
+  } axi4st_``width``_fb_s;
+
+  `OC_LOCAL_AXI4ST_UNROLL(32)
+  `OC_LOCAL_AXI4ST_UNROLL(64)
+  `OC_LOCAL_AXI4ST_UNROLL(128)
+  `OC_LOCAL_AXI4ST_UNROLL(256)
+  `OC_LOCAL_AXI4ST_UNROLL(512)
+  `undef OC_LOCAL_AXI4ST_UNROLL
+
+endpackage // oclib_pkg
 
 `endif //__OCLIB_PKG

@@ -2,15 +2,20 @@
 // SPDX-License-Identifier: MPL-2.0
 
 `include "lib/oclib_uart_pkg.sv"
+`include "lib/oclib_pkg.sv"
 
-module oclib_uart_rx #(
-                       parameter integer ClockHz = 100_000_000,
-                       parameter integer Baud = 115_200,
-                       parameter integer BaudCycles = (ClockHz / Baud), // i.e. 868
-                       parameter integer DebounceCycles = (BaudCycles / 16), // i.e. 54
-                       parameter integer FifoDepth = 0,
-                       parameter integer ErrorWidth = oclib_uart_pkg::ErrorWidth
-                    )
+module oclib_uart_rx
+  #(
+    parameter integer ClockHz = 100_000_000,
+    parameter integer Baud = 115_200,
+    parameter integer BaudCycles = (ClockHz / Baud), // i.e. 868
+    parameter integer DebounceCycles = (BaudCycles / 16), // i.e. 54
+    parameter integer FifoDepth = 0,
+    parameter integer ErrorWidth = oclib_uart_pkg::ErrorWidth,
+    parameter integer SyncCycles = 3,
+    parameter bit     ResetSync = oclib_pkg::False,
+    parameter integer ResetPipeline = 0
+    )
   (
    input                         clock,
    input                         reset,
@@ -21,6 +26,11 @@ module oclib_uart_rx #(
    output logic                  rxValid,
    input                         rxReady
    );
+
+  // synchronize/pipeline reset as needed
+  logic          resetSync;
+  oclib_module_reset #(.ResetSync(ResetSync), .SyncCycles(SyncCycles), .ResetPipeline(ResetPipeline))
+  uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
 
   /* Design Philosophy
 
@@ -66,7 +76,8 @@ module oclib_uart_rx #(
    */
 
   logic                    rxDebounced;
-  oclib_debounce #(DebounceCycles) uINPUT_DEBOUNCE (clock, reset, rx, rxDebounced);
+  oclib_debounce #(.DebounceCycles(DebounceCycles), .SyncCycles(SyncCycles))
+  uINPUT_DEBOUNCE (.clock(clock), .reset(resetSync), .in(rx), .out(rxDebounced));
 
   localparam BaudCounterW = $clog2(BaudCycles);
   logic [BaudCounterW-1:0] baudCounter;
@@ -81,7 +92,7 @@ module oclib_uart_rx #(
   logic                    fifoReady;
 
   always @(posedge clock) begin
-    if (reset) begin
+    if (resetSync) begin
       fifoValid <= 1'b0;
       fifoData <= '0;
       shiftData <= '0;
@@ -139,11 +150,11 @@ module oclib_uart_rx #(
           end
         end
       endcase // case (state)
-    end
-  end
+    end // else: !if(resetSync)
+  end // always @ (posedge clock)
 
   oclib_fifo #(.Width(8), .Depth(FifoDepth))
-  uFIFO (.clock(clock), .reset(reset),
+  uFIFO (.clock(clock), .reset(resetSync),
          .inData(fifoData), .inValid(fifoValid), .inReady(fifoReady),
          .outData(rxData), .outValid(rxValid), .outReady(rxReady));
 

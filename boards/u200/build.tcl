@@ -113,4 +113,5 @@ set tt "# Create bitstream"
 set tt "# ********************************"
 
 write_bitstream -force "project/u200.runs/impl_1/oc_chip_top.bit"
-
+set_msg_config -id {Chipscope 16-155} -suppress
+write_debug_probes -force "project/u200.runs/impl_1/oc_chip_top.ltx"

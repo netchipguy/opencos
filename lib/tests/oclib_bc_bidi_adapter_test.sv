@@ -59,8 +59,8 @@ module oclib_bc_bidi_adapter_test;
   ocsim_data_sink #(.Type(logic[7:0]))
   uSINK_S0 (.clock(clock), .inData(toS0.data), .inValid(toS0.valid), .inReady(fromS0.ready));
 
-  oclib_bc_bidi_adapter #(.BcTypeA(oclib_pkg::bc_8b_bidi_s),
-                          .BcTypeB(oclib_pkg::bc_8b_bidi_s),
+  oclib_bc_bidi_adapter #(.BcAType(oclib_pkg::bc_8b_bidi_s),
+                          .BcBType(oclib_pkg::bc_8b_bidi_s),
                           .BufferStages(3),
                           .ResetSync(1),
                           .ResetPipeline(3))
@@ -68,8 +68,8 @@ module oclib_bc_bidi_adapter_test;
                .aIn(fromS0), .aOut(toS0),
                .bIn(toS1), .bOut(fromS1));
 
-  oclib_bc_bidi_adapter #(.BcTypeA(oclib_pkg::bc_8b_bidi_s),
-                          .BcTypeB(oclib_pkg::bc_async_8b_bidi_s),
+  oclib_bc_bidi_adapter #(.BcAType(oclib_pkg::bc_8b_bidi_s),
+                          .BcBType(oclib_pkg::bc_async_8b_bidi_s),
                           .BufferStages(3),
                           .ResetSync(0),
                           .ResetPipeline(3))
@@ -77,8 +77,8 @@ module oclib_bc_bidi_adapter_test;
                .aIn(fromS1), .aOut(toS1),
                .bIn(toS2), .bOut(fromS2));
 
-  oclib_bc_bidi_adapter #(.BcTypeA(oclib_pkg::bc_async_8b_bidi_s),
-                          .BcTypeB(oclib_pkg::bc_8b_bidi_s),
+  oclib_bc_bidi_adapter #(.BcAType(oclib_pkg::bc_async_8b_bidi_s),
+                          .BcBType(oclib_pkg::bc_8b_bidi_s),
                           .BufferStages(0),
                           .ResetSync(0),
                           .ResetPipeline(0))
@@ -86,8 +86,8 @@ module oclib_bc_bidi_adapter_test;
                .aIn(fromS2), .aOut(toS2),
                .bIn(toS3), .bOut(fromS3));
 
-  oclib_bc_bidi_adapter #(.BcTypeA(oclib_pkg::bc_8b_bidi_s),
-                          .BcTypeB(oclib_pkg::bc_async_1b_bidi_s),
+  oclib_bc_bidi_adapter #(.BcAType(oclib_pkg::bc_8b_bidi_s),
+                          .BcBType(oclib_pkg::bc_async_1b_bidi_s),
                           .BufferStages(3),
                           .ResetSync(0),
                           .ResetPipeline(3))
@@ -95,8 +95,8 @@ module oclib_bc_bidi_adapter_test;
                .aIn(fromS3), .aOut(toS3),
                .bIn(toS4), .bOut(fromS4));
 
-  oclib_bc_bidi_adapter #(.BcTypeA(oclib_pkg::bc_async_1b_bidi_s),
-                          .BcTypeB(oclib_pkg::bc_8b_bidi_s),
+  oclib_bc_bidi_adapter #(.BcAType(oclib_pkg::bc_async_1b_bidi_s),
+                          .BcBType(oclib_pkg::bc_8b_bidi_s),
                           .BufferStages(0),
                           .ResetSync(0),
                           .ResetPipeline(0))

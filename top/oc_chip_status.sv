@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 `include "top/oc_top_pkg.sv"
+`include "lib/oclib_pkg.sv"
 `include "lib/oclib_defines.vh"
 
 module oc_chip_status #(

@@ -3,11 +3,13 @@
 
 `include "lib/oclib_pkg.sv"
 
-module oclib_ready_valid_pipeline #(parameter integer Width = 1,
-                                    parameter integer Length = 2,
-                                    parameter bit     ResetSync = oclib_pkg::False,
-                                    parameter integer ResetPipeline = 0
-                                    )
+module oclib_ready_valid_pipeline
+  #(parameter integer Width = 1,
+    parameter integer Length = 2,
+    parameter integer SyncCycles = 3,
+    parameter bit     ResetSync = oclib_pkg::False,
+    parameter integer ResetPipeline = 0
+    )
   (
    input                    clock,
    input                    reset,
@@ -31,7 +33,8 @@ module oclib_ready_valid_pipeline #(parameter integer Width = 1,
   else begin
     for (genvar stage=0; stage<Length; stage++) begin
       logic              localInReady;
-      oclib_ready_valid_retime #(.Width(Width), .ResetSync(ResetSync), .ResetPipeline(ResetPipeline))
+      oclib_ready_valid_retime #(.Width(Width), .SyncCycles(SyncCycles),
+                                 .ResetSync(ResetSync), .ResetPipeline(ResetPipeline))
       uRETIME (.clock(clock), .reset(reset),
                .inData((stage==0) ? inData : stageData[stage-1]),
                .inValid((stage==0) ? inValid : stageValid[stage-1]),

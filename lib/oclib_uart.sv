@@ -4,17 +4,20 @@
 `include "lib/oclib_pkg.sv"
 `include "lib/oclib_uart_pkg.sv"
 
-module oclib_uart #(
-                    parameter integer ClockHz = 100_000_000,
-                    parameter integer Baud = 115_200,
-                    parameter type    BcType = oclib_pkg::bc_8b_bidi_s,
-                    parameter integer BaudCycles = (ClockHz / Baud),
-                    parameter integer DebounceCycles = (BaudCycles / 16),
-                    parameter bit     ResetSync = 0,
-                    parameter integer TxFifoDepth = 32,
-                    parameter integer RxFifoDepth = 0,
-                    parameter integer ErrorWidth = oclib_uart_pkg::ErrorWidth
-                  )
+module oclib_uart
+  #(
+    parameter integer ClockHz = 100_000_000,
+    parameter integer Baud = 115_200,
+    parameter         type BcType = oclib_pkg::bc_8b_bidi_s,
+    parameter integer BaudCycles = (ClockHz / Baud),
+    parameter integer DebounceCycles = (BaudCycles / 16),
+    parameter integer SyncCycles = 3,
+    parameter bit     ResetSync = oclib_pkg::False,
+    parameter integer ResetPipeline = 0,
+    parameter integer TxFifoDepth = 32,
+    parameter integer RxFifoDepth = 0,
+    parameter integer ErrorWidth = oclib_uart_pkg::ErrorWidth
+    )
   (
    input                   clock,
    input                   reset,
@@ -25,9 +28,10 @@ module oclib_uart #(
    output [ErrorWidth-1:0] error
    );
 
-  wire           resetQ;
-  oclib_synchronizer #(.Enable(ResetSync))
-  uRESET_SYNC (.clock(clock), .in(reset), .out(resetQ));
+  // synchronize/pipeline reset as needed
+  logic          resetSync;
+  oclib_module_reset #(.ResetSync(ResetSync), .SyncCycles(SyncCycles), .ResetPipeline(ResetPipeline))
+  uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
 
   // The uart tx/rx library components use a generic data/valid/ready protocol.
   // These two can be plugged straight into a bc_8b_bidi_s channel.  It can be
@@ -41,16 +45,16 @@ module oclib_uart #(
 
   oclib_uart_tx #(.ClockHz(ClockHz), .Baud(Baud), .BaudCycles(BaudCycles),
                   .FifoDepth(TxFifoDepth))
-  uTX (.clock(clock), .reset(resetQ), .tx(tx),
+  uTX (.clock(clock), .reset(resetSync), .tx(tx),
        .txData(bcToUart.data), .txValid(bcToUart.valid), .txReady(bcFromUart.ready));
 
   oclib_uart_rx #(.ClockHz(ClockHz), .Baud(Baud), .BaudCycles(BaudCycles), .ErrorWidth(ErrorWidth),
                   .DebounceCycles(DebounceCycles), .FifoDepth(RxFifoDepth))
-  uRX (.clock(clock), .reset(resetQ), .error(error), .rx(rx),
+  uRX (.clock(clock), .reset(resetSync), .error(error), .rx(rx),
        .rxData(bcFromUart.data), .rxValid(bcFromUart.valid), .rxReady(bcToUart.ready));
 
-  oclib_bc_bidi_adapter #(.BcTypeA(BcType), .BcTypeB(oclib_pkg::bc_8b_bidi_s))
-  uBC (.clock(clock), .reset(resetQ),
+  oclib_bc_bidi_adapter #(.BcAType(BcType), .BcBType(oclib_pkg::bc_8b_bidi_s))
+  uBC (.clock(clock), .reset(resetSync),
        .aIn(bcIn), .aOut(bcOut),
        .bIn(bcFromUart), .bOut(bcToUart));
 

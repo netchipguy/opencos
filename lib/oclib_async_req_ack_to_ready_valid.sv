@@ -6,6 +6,7 @@
 module oclib_async_req_ack_to_ready_valid
   #(
     parameter integer Width = 8,
+    parameter integer SyncCycles = 3,
     parameter bit     ResetSync = oclib_pkg::False,
     parameter integer ResetPipeline = 0
     )
@@ -20,18 +21,19 @@ module oclib_async_req_ack_to_ready_valid
    input                    outReady
    );
 
-  logic                     resetSync;
-  logic                     resetQ;
-  oclib_synchronizer #(.Enable(ResetSync)) uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
-  oclib_pipeline #(.Length(ResetPipeline)) uRESET_PIPE (.clock(clock), .in(resetSync), .out(resetQ));
+  // synchronize/pipeline reset as needed
+  logic          resetSync;
+  oclib_module_reset #(.ResetSync(ResetSync), .SyncCycles(SyncCycles), .ResetPipeline(ResetPipeline))
+  uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
 
   // synchronize the incoming async signals
   logic [Width-1:0]         inDataSync;
   logic                     inReqSync;
-  oclib_synchronizer #(.Width(Width+1)) uIN_SYNC (.clock(clock), .in({inReq, inData}), .out({inReqSync, inDataSync}));
+  oclib_synchronizer #(.Width(Width+1), .SyncCycles(SyncCycles))
+  uIN_SYNC (.clock(clock), .in({inReq, inData}), .out({inReqSync, inDataSync}));
 
   always_ff @(posedge clock) begin
-    if (resetQ) begin
+    if (resetSync) begin
       outData <= '0;
       outValid <= 1'b0;
       inAck <= 1'b0;
@@ -44,7 +46,7 @@ module oclib_async_req_ack_to_ready_valid
         outData <= inDataSync;
         outValid <= 1'b1;
       end
-    end // else: !if(resetQ)
+    end // else: !if(resetSync)
   end // always_ff @ (posedge clock)
 
-endmodule // oclib_ready_valid_to_async_req_ack
+endmodule // oclib_async_req_ack_to_ready_valid

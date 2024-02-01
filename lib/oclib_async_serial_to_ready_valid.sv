@@ -6,6 +6,7 @@
 module oclib_async_serial_to_ready_valid
   #(
     parameter integer Width = 8,
+    parameter integer SyncCycles = 3,
     parameter bit     ResetSync = oclib_pkg::False,
     parameter integer ResetPipeline = 0
     )
@@ -19,14 +20,15 @@ module oclib_async_serial_to_ready_valid
    input                    outReady
    );
 
-  logic                     resetSync;
-  logic                     resetQ;
-  oclib_synchronizer #(.Enable(ResetSync)) uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
-  oclib_pipeline #(.Length(ResetPipeline)) uRESET_PIPE (.clock(clock), .in(resetSync), .out(resetQ));
+  // synchronize/pipeline reset as needed
+  logic          resetSync;
+  oclib_module_reset #(.ResetSync(ResetSync), .SyncCycles(SyncCycles), .ResetPipeline(ResetPipeline))
+  uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
 
   // synchronize the incoming async signals
   logic [1:0]               inDataSync;
-  oclib_synchronizer #(.Width(2)) uIN_SYNC (.clock(clock), .in(inData), .out(inDataSync));
+  oclib_synchronizer #(.Width(2), .SyncCycles(SyncCycles))
+  uIN_SYNC (.clock(clock), .in(inData), .out(inDataSync));
 
   localparam                CounterWidth = $clog2(Width);
   logic [CounterWidth-1:0]  counter;
@@ -43,7 +45,7 @@ module oclib_async_serial_to_ready_valid
 
   // outValid is really the one state bit for our 2-state machine (not counting the counter...)
   always_ff @(posedge clock) begin
-    if (resetQ) begin
+    if (resetSync) begin
       outData <= '0;
       outValid <= 1'b0;
       counter <= '0;
@@ -73,7 +75,7 @@ module oclib_async_serial_to_ready_valid
           end
         end
       end
-    end // else: !if(resetQ)
+    end // else: !if(resetSync)
     inDataQ <= inDataSync; // just pipeline, outside reset
   end // always_ff @ (posedge clock)
 

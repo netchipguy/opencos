@@ -159,7 +159,7 @@
   `ifdef SIMULATION \
   initial $fatal(1, "%t %m: ERROR: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); \
   `else \
-  $fatal(1, "%m: ERROR: %s at %s:%0d", str, `__FILE__, `__LINE__); \
+  $fatal(1, "%m: ERROR: %s", str); \
   `endif
 
   `define OC_STATIC_WARNING(str) \
@@ -167,7 +167,7 @@
   initial $warning(1, "%t %m: WARNING: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); \
   final $warning(1, "%t %m: WARNING: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); \
   `else \
-  $warning(1, "%m: WARNING: %s at %s:%0d", str, `__FILE__, `__LINE__); \
+  $warning(1, "%m: WARNING: %s", str); \
   `endif
 
 // *****************************************************************************************
