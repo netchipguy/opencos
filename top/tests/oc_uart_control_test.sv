@@ -109,7 +109,7 @@ module oc_uart_control_test;
                  .blink(blink)  );
 
   always @(posedge resetOut) begin
-    ocsim_reset.Reset();
+    uRESET.Reset();
   end
 
   task TestExpectBanner();

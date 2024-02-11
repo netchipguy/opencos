@@ -41,13 +41,6 @@ module oclib_words_to_csr
     csr.write = csrWriteOut;
   end
 
-  // response data
-  always_ff @(posedge clock) begin
-    if (csrFb.ready) begin
-      wordOutData <= csrFb;
-    end
-  end
-
   // state machine
   enum logic [1:0] { StIdle, StWait, StResp } state;
 
@@ -61,6 +54,8 @@ module oclib_words_to_csr
       state <= StIdle;
     end
     else begin
+
+      // response data
       if (csrFb.ready) wordOutData <= csrFb;
 
       case (state)

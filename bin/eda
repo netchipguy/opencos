@@ -140,7 +140,7 @@ class Command:
         return True
 
     def do_it(self):
-        util.error(f"Need to bind {self.command_name} command to a particular tool")
+        util.error(f"No tool bound to command '{self.command_name}', you probably need to setup tool, or use '--tool <name>'")
 
     def help(self):
         util.info(f"Generic help (from class Command):")
@@ -393,6 +393,7 @@ class CommandDesign(Command):
         self.defines['OC_SEED'] = "%d" % self.args['seed']
 
 class CommandSim(CommandDesign):
+
     def __init__(self, config):
         CommandDesign.__init__(self, config, "sim")
         self.args['waves'] = False
@@ -409,6 +410,12 @@ class CommandSim(CommandDesign):
             # create our work dir
             self.create_work_dir()
             self.do_it()
+
+class CommandElab(CommandSim):
+    def __init__(self, config):
+        CommandSim.__init__(self, config)
+        # add args specific to this simulator
+        self.stop_after_compile = True
 
 class CommandSynth(CommandDesign):
     def __init__(self, config):
@@ -523,6 +530,8 @@ class CommandMultiWorker(threading.Thread):
                 self.work_queue.task_done()
                 _threads_done += 1
 
+tools_loaded = []
+
 class CommandMulti(Command):
     def __init__(self, config):
         Command.__init__(self, config, "multi")
@@ -627,10 +636,6 @@ class CommandMulti(Command):
                 # just reprocess this directory (matches "./some/path" and retries as "some/path")
                 util.debug(f"RESOLVE_TARGET L{level}: base_path={base_path}, processing {part}, recursing here")
                 self.resolve_target(base_path, os.path.sep.join(target_path_parts), command, level+1)
-            elif os.path.isdir(os.path.join(base_path, part)):
-                # reprocess in a lower directory (matches "some/...", enters "some/", and retries "...")
-                util.debug(f"RESOLVE_TARGET L{level}: base_path={base_path}, processing {part}, recursing down")
-                self.resolve_target(os.path.join(base_path, part), os.path.sep.join(target_path_parts), command, level+1)
             elif part == "...":
                 util.debug(f"RESOLVE_TARGET L{level}: base_path={base_path}, processing {part}, recursing to check here")
                 # first we check this dir: {"<base>",".../target"} should match "target" in <base>, so we call {"<base>","target"}
@@ -643,6 +648,14 @@ class CommandMulti(Command):
                     if os.path.isdir(os.path.join(base_path,e)):
                         util.debug(f"RESOLVE_TARGET L{level}: base_path={base_path}, processing {part}, recursing into {e}")
                         self.resolve_target(os.path.join(base_path,e), target, command, level+1)
+            elif part.startswith("."):
+                util.debug(f"RESOLVE_TARGET L{level}: base_path={base_path}, processing {part}, skipping hidden")
+            elif part == self.args['eda-dir']:
+                util.debug(f"RESOLVE_TARGET L{level}: base_path={base_path}, processing {part}, skipping eda.dir")
+            elif os.path.isdir(os.path.join(base_path, part)):
+                # reprocess in a lower directory (matches "some/...", enters "some/", and retries "...")
+                util.debug(f"RESOLVE_TARGET L{level}: base_path={base_path}, processing {part}, recursing down")
+                self.resolve_target(os.path.join(base_path, part), os.path.sep.join(target_path_parts), command, level+1)
             elif part == "*":
                 # descend into every directory, we only go in if there's a DEPS though
                 util.debug(f"RESOLVE_TARGET L{level}: base_path={base_path}, processing {part}, looking through dirs...")
@@ -776,7 +789,11 @@ class CommandMulti(Command):
                 if target.startswith(multi_cwd): target = target[len(multi_cwd):]
                 # in all but fancy mode, we will print this text at the launch of a job.  It may get a newline below
                 job_text = sprint_job_line(jobs_launched, target)
-                command_list = [ 'python', os.path.realpath(__file__), command, target ]
+                command_list = [ 'python3', os.path.realpath(__file__)]
+                for tool in tools_loaded:
+                    command_list.extend(['--tool', tool])
+                command_list.append(command)
+                command_list.append(target)
                 command_list.extend(arg_tokens)
 
                 if run_parallel:
@@ -1406,6 +1423,8 @@ class CommandSimQuesta(CommandSim, ToolQuesta):
             command_list += [ f ]
 
         if self.args['xilinx']:
+            if 'XILINX_VIVADO' not in os.environ:
+                util.error("Vivado is not setup, no XILINX_VIVADO in env")
             command_list += [ os.path.join( os.environ['XILINX_VIVADO'], 'data/verilog/src/glbl.v') ]
 
         # misc options
@@ -1416,7 +1435,6 @@ class CommandSimQuesta(CommandSim, ToolQuesta):
         if util.args['verbose']: command_list += ['-verbose']
         if self.args['xilinx']:
             command_list += "-L xil_defaultlib -L unisims_ver -L unimacro_ver -L xpm -L secureip -L xilinx_vip".split(" ")
-            command_list += ['glbl']
 
         # check if we're bailing out early
         if self.stop_after_compile:
@@ -1451,14 +1469,14 @@ class CommandElabQuesta(CommandSimQuesta):
 
 config = {
     'command_handler' : {
-        "sim"    : CommandSimVivado,
-        "elab"   : CommandElabVivado,
-        "synth"  : CommandSynthVivado,
-        "proj"   : CommandProjVivado,
+        "sim"    : CommandSim,
+        "elab"   : CommandElab,
+        "synth"  : CommandSynth,
+        "proj"   : CommandProj,
         "multi"  : CommandMulti,
         "flist"  : CommandFList,
         "waves"  : CommandWaves,
-        "upload" : CommandUploadVivado,
+        "upload" : CommandUpload,
     },
     'dep_sub'        : [ [ r'csr\@(\w+)\.txt', r'\1.sv@csrgen,\1.txt $root_dir/v_csr_regs_deps'], ],
     # TODO: I don't think we want file_order stuff.  Anyway how do you handle a package pulling in another package.
@@ -1513,10 +1531,35 @@ def interactive():
         tokens = line.split()
         process_tokens(tokens)
 
+def auto_tool_setup():
+    if shutil.which('vivado'):
+        util.info(f"Detected Vivado ({shutil.which('vivado')}), auto-setting up tool (--tool vivado)")
+        tool_setup('vivado', quiet=True)
+    if shutil.which('qrun'):
+        util.info(f"Detected Questa ({shutil.which('qrun')}), auto-setting up tool (--tool questa)")
+        tool_setup('questa', quiet=True)
+
+def tool_setup(tool, quiet=False):
+    global tools_loaded
+    if tool == "vivado":
+        config['command_handler']['elab'] = CommandElabVivado
+        config['command_handler']['sim'] = CommandSimVivado
+        config['command_handler']['synth'] = CommandSynthVivado
+        config['command_handler']['proj'] = CommandProjVivado
+        config['command_handler']['upload'] = CommandUploadVivado
+    elif tool == "questa":
+        config['command_handler']['elab'] = CommandElabQuesta
+        config['command_handler']['sim'] = CommandSimQuesta
+    else:
+        util.error(f"Don't know tool '{tool}'")
+    if not quiet:
+        util.info(f"Setup for tool: '{tool}'")
+    tools_loaded.append(tool)
+
 def process_tokens(tokens):
     # this is the top level token processing function.  tokens can come from command line, setup file, or interactively.
     # we do one pass through all the tokens, triaging them into:
-    # - those we can execute immediate (help, quit, bind, and global opens like --verbose, --debug, --color)
+    # - those we can execute immediate (help, quit, and global opens like --debug, --color)
     # - a command (sim, synth, etc)
     # - command arguments (--seed, +define, +incdir, etc) which will be deferred and processed by the command
     deferred_tokens = []
@@ -1532,11 +1575,11 @@ def process_tokens(tokens):
             exit(0)
         if util.process_token(token): # see if eda_util needs to process this (printing related)
             continue
-        if token == 'bind':
-            if len(tokens) < 2: util.error("Need two arguments after 'bind'")
-            exec("config['command_handler']['%s'] = %s" % (tokens[0], tokens[1]))
-            tokens.pop(0)
-            tokens.pop(0)
+        if token == '--tool':
+            if len(tokens) < 1: util.error("Need argument after '--tool'")
+            tool_setup(tokens.pop(0))
+            #exec("config['command_handler']['%s'] = %s" % (tokens[0], tokens[1]))
+            #tokens.pop(0)
             continue
         if token in config['command_handler']:
             if (command == ""):
@@ -1553,6 +1596,7 @@ def main():
         # softlink say "isim" to "eda", and we translate that into "eda sim" which takes pretty standard
         # args just fine.  eventually define a translation layer for arguments to enable mapping features
         # when emulating the command line of other tools.
+        auto_tool_setup()
         process_tokens(sys.argv[1:])
     else:
         util.info("*** OpenCOS EDA Tool Wrapper ***")
@@ -1590,9 +1634,6 @@ if __name__ == "__main__":
 
 # TODO:
 # * read config from config files (script dir, home dir, cwd upwards to ... ? )
-# * add synth
-# * create xdc on the fly via command line or DEPS target settings (setting vars other than defines in the DEPs?)
-# * start meda at this point, focus is N jobs on M cores, for sweeping and regressions (sweep will use xdc-on-the-fly stuff)
 
 # IDEAS:
 # * options with no default (i.e. if user doesn't override, THEN we set it, like "seed" or "work-dir") can be given a
