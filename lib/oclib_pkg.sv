@@ -127,31 +127,21 @@ package oclib_pkg;
   // CSR protocols
   // ***********************************************************************************************
 
-  localparam CsrCommandRead = 8'h01;
-  localparam CsrCommandWrite = 8'h02;
-  localparam CsrCommandRead64 = 8'h11;
-  localparam CsrCommandWrite64 = 8'h12;
-  localparam CsrCommandStatus = 8'hfe;
-  localparam CsrCommandClear = 8'hff;
-
-  localparam CsrStatusInvalidLength = 8'h01;
-  localparam CsrStatusInvalid64Bit  = 8'h02;
-
-  localparam integer BcCsrOptionRequestHasToBlock = (1 << 0);
-  localparam integer BcCsrOptionRequestHasFromBlock = (1 << 1);
-  localparam integer BcCsrOptionResponseHasToBlock = (1 << 16);
-  localparam integer BcCsrOptionResponseHasFromBlock = (1 << 17);
-  localparam DefaultBcCsrOptions = (BcCsrOptionRequestHasToBlock + BcCsrOptionRequestHasFromBlock +
-                                   BcCsrOptionResponseHasToBlock + BcCsrOptionResponseHasFromBlock);
+  localparam [15:0] CsrIdPll = 'd1;
+  localparam [15:0] CsrIdChipmon = 'd2;
+  localparam [15:0] CsrIdProtect = 'd3;
+  localparam [15:0] CsrIdHbm = 'd4;
+  localparam [15:0] CsrIdIic = 'd5;
+  localparam [15:0] CsrIdLed = 'd6;
+  localparam [15:0] CsrIdGpio = 'd7;
+  localparam [15:0] CsrIdFan = 'd8;
+  localparam [15:0] CsrIdCmac = 'd9;
+  localparam [15:0] CsrIdPcie = 'd10;
 
   localparam [31:0] BcBlockIdAny = 32'hffff_ffff;
   localparam [31:0] BcBlockIdUser = 32'h8000_0000;
 
   localparam [3:0] BcSpaceIdAny = 4'hf;
-
-  function bit CommandIs64Bit ( input [7:0] csrCommand );
-    return ((csrCommand == CsrCommandRead64) || (csrCommand == CsrCommandWrite64));
-  endfunction // CommandIs64Bit
 
   // SIMPLE PARALLEL CSR PROTOCOL
 

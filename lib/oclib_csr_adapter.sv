@@ -14,7 +14,7 @@ module oclib_csr_adapter
     parameter integer SyncCycles = 3,
     parameter bit     ResetSync = UseClockOut,
     parameter integer ResetPipeline = 0,
-    parameter bit     UseCsrSelect = oclib_pkg::False,
+    parameter bit     UseCsrSelect = oclib_pkg::False, // I don't think we need this? just default input to 1?
     parameter [31:0]  AnswerToBlock = oclib_pkg::BcBlockIdAny,
     parameter [3:0]   AnswerToSpace = oclib_pkg::BcSpaceIdAny,
     // CsrIntType -- the internal normalized datapath type

@@ -8,6 +8,8 @@ module oclib_csr_array
     parameter integer                      DataW = 32,
     parameter integer                      NumCsr = 8,
     parameter integer                      CsrAlignment = oclib_pkg::DefaultCsrAlignment,
+    parameter                              type CsrType = oclib_pkg::csr_32_s,
+    parameter                              type CsrFbType = oclib_pkg::csr_32_fb_s,
     parameter integer                      SyncCycles = 3,
     parameter bit                          ResetSync = oclib_pkg::False,
     parameter integer                      ResetPipeline = 0,
@@ -34,9 +36,9 @@ module oclib_csr_array
   (
    input                                 clock,
    input                                 reset,
-   input                                 csrSelect,
-   input                                 oclib_pkg::csr_32_s csr,
-   output                                oclib_pkg::csr_32_fb_s csrFb,
+   input                                 csrSelect = 1'b1,
+   input                                 CsrType csr,
+   output                                CsrFbType csrFb,
    output logic [0:NumCsr-1] [DataW-1:0] csrConfig,
    input [0:NumCsr-1] [DataW-1:0]        csrStatus,
    output logic [0:NumCsr-1]             csrRead,
@@ -44,14 +46,31 @@ module oclib_csr_array
    input                                 clockCsrConfig = 1'b0
    );
 
-  localparam integer                     CsrAddressShift = $clog2(CsrAlignment);
-  localparam integer                     LocalCsrAddressWidth = $bits(csr.address) - CsrAddressShift;
-
   // synchronize/pipeline reset as needed
   logic          resetSync;
   oclib_module_reset #(.ResetSync(ResetSync), .SyncCycles(SyncCycles), .ResetPipeline(ResetPipeline),
                        .NoShiftRegister(oclib_pkg::True))
   uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
+
+  // convert incoming CSR array if necessary
+  oclib_pkg::csr_32_s csrNormal;
+  oclib_pkg::csr_32_fb_s csrNormalFb;
+
+  if (type(CsrType) != type(oclib_pkg::csr_32_s)) begin
+
+    oclib_csr_adapter #(.CsrInType(CsrType), .CsrInFbType(CsrFbType),
+                        .CsrOutType(), .CsrOutFbType())
+    uCSR_ADAPTER (.clock(clock), .reset(resetSync),
+                  .in(csr), .inFb(csrFb),
+                  .out(csrNormal), .outFb(csrNormalFb));
+  end
+  else begin
+    assign csrNormal = csr;
+    assign csrFb = csrNormalFb;
+  end
+
+  localparam integer                     CsrAddressShift = $clog2(CsrAlignment);
+  localparam integer                     LocalCsrAddressWidth = $bits(csrNormal.address) - CsrAddressShift;
 
   // synch then pipe the incoming csrStatus, as per CsrStatusInputAsync and CsrStatusInputFlops
   logic [0:NumCsr-1] [DataW-1:0]         csrStatusSync;
@@ -102,40 +121,40 @@ module oclib_csr_array
   end
 
   logic [LocalCsrAddressWidth-1:0]       csrAddress;
-  assign csrAddress = csr.address[$bits(csr.address)-1:CsrAddressShift];
+  assign csrAddress = csrNormal.address[$bits(csrNormal.address)-1:CsrAddressShift];
 
-  // Implement the CSR flops.  Fairly simple, also heavily reliant on synthesis optimizing unused logic (a common theme in OpenChip)
+  // Implement the CSR flops.  Heavily reliant on synthesis optimizing unused logic (a common theme in OpenChip)
   always_ff @(posedge clock) begin
-    csrFb.rdata <= (csr.read && !csrFb.ready) ? csrReadValue[csrAddress] :
-                   csr.write ? '0 :
-                   csrFb.rdata;
+    csrNormalFb.rdata <= (csrNormal.read && !csrNormalFb.ready) ? csrReadValue[csrAddress] :
+                         csrNormal.write ? '0 :
+                         csrNormalFb.rdata;
     if (resetSync) begin
       for (int i=0; i<NumCsr; i++) begin
         csrConfigInternal[i] <= CsrInitBits[i];
       end
-      csrFb <= '0;
+      csrNormalFb <= '0;
       csrReadInternal <= '0;
       csrWriteInternal <= '0;
     end
     else begin
       csrReadInternal <= '0;
       csrWriteInternal <= '0;
-      csrFb.ready <= (csrSelect && (csr.read || csr.write) && !csrFb.ready);
-      csrFb.error <= (csrFb.error ? csrSelect :
-                      (csrSelect && (csr.read || csr.write) && (csrAddress >= NumCsr)));
+      csrNormalFb.ready <= (csrSelect && (csrNormal.read || csrNormal.write) && !csrNormalFb.ready);
+      csrNormalFb.error <= (csrNormalFb.error ? csrSelect :
+                            (csrSelect && (csrNormal.read || csrNormal.write) && (csrAddress >= NumCsr)));
       for (int i=0; i<NumCsr; i++) begin
         if (i==csrAddress) begin
-          if (csrSelect && csr.write && !csrFb.ready) begin
+          if (csrSelect && csrNormal.write && !csrNormalFb.ready) begin
             csrConfigInternal[i] <= ((CsrFixedBits[i] & CsrInitBits[i]) |
-                                     (csr.wdata & (CsrRwBits[i] | CsrWoBits[i]) & ~CsrFixedBits[i]));
+                                     (csrNormal.wdata & (CsrRwBits[i] | CsrWoBits[i]) & ~CsrFixedBits[i]));
             csrWriteInternal[i] <= 1'b1;
           end
-          if (csrSelect && csr.read && !csrFb.ready) begin
+          if (csrSelect && csrNormal.read && !csrNormalFb.ready) begin
             csrReadInternal[i] <= 1'b1;
           end
-        end
-      end
-    end
-  end
+        end // if (i==csrAddress)
+      end // for (int i=0; i<NumCsr; i++)
+    end // else: !if(resetSync)
+  end // always_ff @ (posedge clock)
 
 endmodule // oclib_csr_array

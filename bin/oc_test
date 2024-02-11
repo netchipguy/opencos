@@ -11,4 +11,4 @@ echo "*** RUNNING TESTS ***"
 eda multi sim .../*_test --parallel 16 --force-logfile "oc_test.eda.sim.log"
 
 echo "*** RUNNING SYNTHESIS ***"
-eda multi synth .../* --parallel 8 --force-logfile "oc_test.eda.synth.log"
+eda multi synth .../* --parallel 16 --force-logfile "oc_test.eda.synth.log"

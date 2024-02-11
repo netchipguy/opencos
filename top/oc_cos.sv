@@ -7,23 +7,41 @@
 
 module oc_cos
   #(
+    // **************************************************************
+    // ***                EXTERNAL CONFIGURATION                  ***
+    // Interfaces to the chip top
+    // **************************************************************
+
     // *** MISC ***
     parameter integer Seed = 0,
-    parameter bit EnableUartControl = 0,
+    parameter bit     EnableUartControl = 0,
+
     // *** REFCLOCK ***
     parameter integer RefClockCount = 1,
     `OC_LOCALPARAM_SAFE(RefClockCount),
     parameter integer RefClockHz [0:RefClockCount-1] = {100_000_000},
+
     // *** TOP CLOCK ***
     parameter integer ClockTop = oc_top_pkg::ClockIdSingleEndedRef(0),
+
     // *** LED ***
-    parameter integer LedCount = 0,
+    parameter integer LedCount = 3,
     `OC_LOCALPARAM_SAFE(LedCount),
+
     // *** UART ***
-    parameter integer UartCount = 0,
+    parameter integer UartCount = 2,
     `OC_LOCALPARAM_SAFE(UartCount),
-    parameter integer UartBaud [0:UartCountSafe-1] = {115200},
-    parameter integer UartControl = 0
+    parameter integer UartBaud [0:UartCountSafe-1] = {115200, 115200},
+    parameter integer UartControl = 0,
+    // **************************************************************
+    // ***                INTERNAL CONFIGURATION                  ***
+    // Configuring OC_COS internals which board can override in
+    // target-specific ways
+    // **************************************************************
+
+    // *** Format of Top-Level CSR bus ***
+    parameter         type CsrTopType = oclib_pkg::bc_8b_bidi_s,
+    parameter         type CsrTopFbType = oclib_pkg::bc_8b_bidi_s
     )
   (
    // *** REFCLOCK ***
@@ -37,11 +55,13 @@ module oc_cos
    output logic [UartCountSafe-1:0] uartTx
    );
 
+  // *******************************************************************************
   // *** REFCLOCK ***
   localparam integer ClockTopHz = RefClockHz[ClockTop]; // should be ~100MHz, some IP cannot go faster
   logic                             clockTop;
   assign clockTop = clockRef[ClockTop];
 
+  // *******************************************************************************
   // *** RESET AND TIMING ***
   logic                             resetFromUartControl;
   logic                             resetTop;
@@ -60,41 +80,60 @@ module oc_cos
   oc_chip_status #(.ClockHz(ClockTopHz))
   uSTATUS (.clock(clockTop), .reset(resetTop), .chipStatus(chipStatus));
 
+  // *******************************************************************************
   // *** UART CONTROL ***
-  logic                             blink;
+
+  localparam                        type UartBcType = oclib_pkg::bc_8b_bidi_s;
+  UartBcType uartBcOut, uartBcIn;
 
   if (EnableUartControl) begin
     oc_uart_control #(.ClockHz(ClockTopHz),
-                      .Baud(UartBaud[UartControl]))
+                      .Baud(UartBaud[UartControl]),
+                      .BcType(UartBcType))
     uCONTROL (.clock(clockTop), .reset(resetTop),
               .resetOut(resetFromUartControl),
-              .blink(blink),
-              .uartRx(uartRx[UartControl]), .uartTx(uartTx[UartControl]) );
+              .uartRx(uartRx[UartControl]), .uartTx(uartTx[UartControl]),
+              .bcOut(uartBcOut), .bcIn(uartBcIn));
   end
   else begin
     assign resetFromUartControl = 1'b0;
     assign blink = 1'b0;
   end
 
-  // *** CONTROL MUX ***
+  // *******************************************************************************
+  // *** TOP_CSR_SPLIT ***
+
+  localparam integer NumCsrTop = 1; // just oc_led for now
+
+  CsrTopType csrTop [NumCsrTop];
+  CsrTopFbType csrTopFb [NumCsrTop];
+  logic              resetFromTopCsrSplitter;
+
+  oclib_csr_tree_splitter #(.CsrInType(UartBcType), .CsrInFbType(UartBcType),
+                            .CsrOutType(CsrTopType), .CsrOutFbType(CsrTopFbType),
+                            .Outputs(NumCsrTop) )
+  uTOP_CSR_SPLITTER (.clock(clockTop), .reset(resetTop),
+                     .resetRequest(resetFromTopCsrSplitter),
+                     .in(uartBcOut), .inFb(uartBcIn),
+                     .out(csrTop), .outFb(csrTopFb));
+
+  // *******************************************************************************
+  // *** LED ***
+
+  oc_led #(.ClockHz(ClockTopHz), .LedCount(LedCount),
+           .CsrType(CsrTopType), .CsrFbType(CsrTopFbType))
+  uLED (.clock(clockTop), .reset(resetTop),
+        .ledOut(ledOut),
+        .csr(csrTop[0]), .csrFb(csrTopFb[0]));
 
 
+  // *******************************************************************************
+  // *** idle unused UARTs for now ***
 
-  // *** TEMP ***
-
-  logic [31:0]  count = Seed;
-  always @(posedge clockTop) begin
-    if (hardReset) begin
-      count <= '0;
-      ledOut <= 3'b101;
-    end
-    else begin
-      count <= (count + 1);
-      ledOut <= count[29:27] | {3{blink}};
+  for (genvar i=0; i<UartCount; i++) begin
+    if (i != UartControl) begin
+      assign uartTx[i] = 1'b1;
     end
   end
-
-  // idle SC UART for now
-  assign uartTx[1] = 1'b1;
 
 endmodule // oc_cos

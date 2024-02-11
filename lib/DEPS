@@ -124,6 +124,11 @@ oclib_csr_tree_splitter:
 oclib_csr_check_selected:
         oclib_csr_check_selected.sv
 
+oclib_csr_array:
+        oclib_csr_array.sv
+        oclib_module_reset
+        oclib_csr_adapter
+
 oclib_csr_to_drp:
         oclib_csr_to_drp.sv
         oclib_csr_check_selected

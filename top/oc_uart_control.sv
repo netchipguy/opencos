@@ -38,7 +38,6 @@ module oc_uart_control
    output logic [ErrorWidth-1:0] uartError,
    input                         uartRx,
    output logic                  uartTx,
-   output logic                  blink,
    input                         BcType bcIn,
    output                        BcType bcOut
    );
@@ -65,10 +64,6 @@ module oc_uart_control
   uUART_BC_ADAPTER (.clock(clock), .reset(resetQ),
                .aIn(bcRx), .aOut(bcTx),
                .bOut(bcFromUart), .bIn(bcToUart));
-
-  oclib_pulse_stretcher #(.Cycles(ClockHz))
-  uSTRETCH(.clock(clock), .reset(resetQ),
-           .in(bcToUart.valid), .out(blink));
 
   // **************************
   // SERIAL ROM
@@ -684,7 +679,7 @@ module oc_uart_control
 
 `ifdef OC_UART_CONTROL_INCLUDE_VIO_DEBUG
   `OC_DEBUG_VIO(uVIO, clock, 32, 32,
-                { resetQ, blink, inComment, // 3
+                { resetQ, inComment,        // 2
                   bcFromUart, bcToUart,     // 16
                   serialCounter,            // 8
                   state },                  // 4
@@ -699,7 +694,7 @@ module oc_uart_control
   oclib_synchronizer uILA_RX_SYNC (.clock(clock), .in(uartRx), .out(uartRxSync));
   oclib_synchronizer uILA_TX_SYNC (.clock(clock), .in(uartTx), .out(uartTxSync));
   `OC_DEBUG_ILA(uILA, clock, 8192, 128, 32,
-                { resetQ, blink, inComment,
+                { resetQ, inComment,
                   resetOut, resetCount,
                   bcFromUart, bcToUart,
                   serialCounter,

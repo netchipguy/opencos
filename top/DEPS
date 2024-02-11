@@ -3,7 +3,9 @@ oc_cos:
         oc_cos.sv
         oc_uart_control
         oc_chip_status
+        oc_led
         ../lib/oclib_reset
+        ../lib/oclib_csr_tree_splitter
 
 oc_uart_control:
         oc_uart_control.sv
@@ -12,4 +14,9 @@ oc_uart_control:
 
 oc_chip_status:
         oc_chip_status.sv
-                ../lib/oclib_synchronizer
+        ../lib/oclib_synchronizer
+
+oc_led:
+        oc_led.sv
+        ../lib/oclib_module_reset
+        ../lib/oclib_csr_array

@@ -7,8 +7,9 @@
 module oc_chip_status_test;
 
 //  localparam integer ClockHz = 100_000_000;
-  localparam integer ClockHz = 156_250_000;
-//  localparam integer ClockHz = 33_333_333;
+//  localparam integer ClockHz = 100_000_000;
+//  localparam integer ClockHz = 156_250_000;
+  localparam integer ClockHz = 33_333_333;
   localparam realtime ClockPeriod = (1s/ClockHz);
   localparam realtime AllowedJitter = (2 * ClockPeriod);
 
@@ -55,9 +56,9 @@ module oc_chip_status_test;
     `OC_ANNOUNCE_PARAM_INTEGER(ClockHz);
     `OC_ANNOUNCE_PARAM_REALTIME(ClockPeriod);
     `OC_ANNOUNCE_PARAM_REALTIME(AllowedJitter);
-    for (i=0; i<100; i++) begin
-      repeat (5_000_000) @(posedge clock);
-      $display("%t %m: SIM AT ITER %0d/100, TIME=%.6fs", $realtime, i+1, $realtime/1s);
+    for (i=0; i<40; i++) begin
+      #100ms;
+      $display("%t %m: SIM AT ITER %0d/40, TIME=%.6fs", $realtime, i+1, $realtime/1s);
       $display("%t %m: usPulse: %.3f/%.3f/%.3fns", $realtime, minUsPulse/1ns, avgUsPulse/1ns, maxUsPulse/1ns);
       $display("%t %m: msPulse: %.3f/%.3f/%.3fns", $realtime, minMsPulse/1ns, avgMsPulse/1ns, maxMsPulse/1ns);
       $display("%t %m:  sPulse: %.3f/%.3f/%.3fns", $realtime, minSPulse/1ns, avgSPulse/1ns, maxSPulse/1ns);

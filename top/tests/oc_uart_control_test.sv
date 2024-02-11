@@ -33,7 +33,6 @@ module oc_uart_control_test;
   logic [UartErrorWidth-1:0]      uartError;
   logic                           uartRx;
   logic                           uartTx;
-  logic                           blink;
 
   ocsim_uart #(.Baud(Baud), .Verbose(Verbose))
   uSIM_UART (.rx(uartTx), .tx(uartRx));
@@ -67,6 +66,7 @@ module oc_uart_control_test;
   uCSR_SPLITTER (.clock(clock), .reset(reset),
                  .clockOut(), .resetOut(),
                  .csrSelect(1'b1),
+                 .resetRequest(),
                  .in(csrTop), .inFb(csrTopFb),
                  .out(csr), .outFb(csrFb)  );
 
@@ -105,8 +105,7 @@ module oc_uart_control_test;
   uUART_CONTROL (.clock(clock), .reset(reset),
                  .resetOut(resetOut), .uartError(uartError),
                  .uartTx(uartTx), .uartRx(uartRx),
-                 .bcIn(dutBcIn), .bcOut(dutBcOut),
-                 .blink(blink)  );
+                 .bcIn(dutBcIn), .bcOut(dutBcOut)  );
 
   always @(posedge resetOut) begin
     uRESET.Reset();
