@@ -7,6 +7,7 @@ import datetime
 import os
 import time
 import atexit
+import shutil
 
 logfile = None
 loglast = 0
@@ -102,11 +103,14 @@ def process_token(arg):
 
 fancy_lines_ = []
 
-def fancy_start(fancy_lines = 4):
+def fancy_start(fancy_lines = 4, min_vanilla_lines = 4):
     global fancy_lines_
-    if (fancy_lines < 2): error("Fancy line mode requires at least 2 fancy lines")
-    if (fancy_lines > 16): error("Fancy line mode requires at most 16 fancy lines")
-    if len(fancy_lines_): error("We are already in fancy line mode??")
+    (columns,lines) = shutil.get_terminal_size()
+    if (fancy_lines < 2):
+        error(f"Fancy mode requires at least 2 fancy lines")
+    if (fancy_lines > (lines-min_vanilla_lines)):
+        error(f"Fancy mode supports at most {(lines-min_vanilla_lines)} fancy lines, given {min_vanilla_lines} non-fancy lines")
+    if len(fancy_lines_): error(f"We are already in fancy line mode??")
     for _ in range(fancy_lines-1):
         print("") # create the requisite number of blank lines
         fancy_lines_.append("")

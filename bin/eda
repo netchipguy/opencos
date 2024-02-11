@@ -695,14 +695,14 @@ class CommandMulti(Command):
         if command == "": util.error(f"Didn't get a command after 'multi'!")
 
         # now we need to expand the target list
-        util.info(f"Multi: command: '{command}'")
-        util.info(f"Multi: targets: {target_globs}")
-        util.info(f"Multi: options: {arg_tokens}")
+        util.debug(f"Multi: command: '{command}'")
+        util.debug(f"Multi: targets: {target_globs}")
+        util.debug(f"Multi: options: {arg_tokens}")
         self.targets = []
         cwd = util.getcwd()
         for t in target_globs:
             self.resolve_target(cwd, t, command)
-        util.info(f"Multi: expanded to {len(self.targets)} {command} targets")
+        util.info(f"Multi: Expanded {target_globs} to {len(self.targets)} {command} targets")
         util.info(f"Multi: About to run: ", end="")
         if len(self.targets) > 20:
             for i in range(10):
@@ -744,7 +744,9 @@ class CommandMulti(Command):
         jobs_launched = 0
         num_parallel = min(len(self.targets), self.args['parallel'])
         # 16 should really be the size of window or ?
-        fancy_mode = util.args['fancy'] and (num_parallel > 1) and (num_parallel <= 16)
+        (columns,lines) = shutil.get_terminal_size()
+        # we will enter fancy mode if we are parallel and we can leave 6 lines of regular scrolling output
+        fancy_mode = util.args['fancy'] and (num_parallel > 1) and (num_parallel <= (lines-6))
         multi_cwd = util.getcwd()+os.sep
 
         if run_parallel:
@@ -771,14 +773,13 @@ class CommandMulti(Command):
             anything_done = False
 
             def sprint_job_line(job=0, target="", final=False, hide_stats=False):
-                if final:
-                    target = "jobs passed"
-                    job = num_targets
                 return (f"INFO: [EDA] " +
-                        f"[job {jobs_fmt%job}/{jobs_fmt%num_targets} " +
-                        util.string_or_space(f"| pass {jobs_fmt%len(passed_targets)}/{jobs_fmt%jobs_complete} ", hide_stats) +
-                        util.string_or_space(f"@ {(100*(jobs_complete))/num_targets:5.1f}%] ", hide_stats) +
-                        f"{(target+' ').ljust(longest_target+3,'.')}")
+                        util.string_or_space(f"[job {jobs_fmt%job}/{jobs_fmt%num_targets} ", final) +
+                        util.string_or_space(f"| pass ", hide_stats or final) +
+                        util.string_or_space(f"{jobs_fmt%len(passed_targets)}/{jobs_fmt%jobs_complete} ", hide_stats) +
+                        util.string_or_space(f"@ {(100*(jobs_complete))/num_targets:5.1f}%", hide_stats or final) +
+                        util.string_or_space(f"] ", final) +
+                        f"{command} {(target+' ').ljust(longest_target+3,'.')}")
 
             # for any kind of run (parallel or not, fancy or not, verbose or not) ... can we launch a job?
             if len(self.targets) and (len(running_targets.items()) < num_parallel):
@@ -788,7 +789,7 @@ class CommandMulti(Command):
                 target = self.targets.pop(0)
                 if target.startswith(multi_cwd): target = target[len(multi_cwd):]
                 # in all but fancy mode, we will print this text at the launch of a job.  It may get a newline below
-                job_text = sprint_job_line(jobs_launched, target)
+                job_text = sprint_job_line(jobs_launched, target, hide_stats=run_parallel)
                 command_list = [ 'python3', os.path.realpath(__file__)]
                 for tool in tools_loaded:
                     command_list.extend(['--tool', tool])
@@ -886,7 +887,7 @@ class CommandMulti(Command):
 
         if num_targets:
             emoji = "< :) >" if (len(passed_targets) == num_targets) else "< :( >"
-            util.info(sprint_job_line(job=num_targets,target="jobs passed")+emoji, start="")
+            util.info(sprint_job_line(final=True,target="jobs passed")+emoji, start="")
         else:
             util.info(f"Multi: <No targets found>")
         util.fancy_stop()
