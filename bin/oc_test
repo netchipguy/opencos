@@ -2,13 +2,17 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
+CORES=`nproc`
+THREADS=$(( CORES > 32 ? 16 : (CORES/2) ))
+echo "*** Host has ${CORES} cores, using ${THREADS} threads ***"
+
 # for now, nothing but kicking off eda
 
 echo "*** RUNNING ELABORATIONS ***"
-eda multi elab .../* --parallel 16 --force-logfile "oc_test.eda.elab.log"
+eda multi elab .../* --parallel ${THREADS} --force-logfile "oc_test.eda.elab.log"
 
 echo "*** RUNNING TESTS ***"
-eda multi sim .../*_test --parallel 16 --force-logfile "oc_test.eda.sim.log"
+eda multi sim .../*_test --parallel ${THREADS} --force-logfile "oc_test.eda.sim.log"
 
 echo "*** RUNNING SYNTHESIS ***"
-eda multi synth .../* --parallel 16 --force-logfile "oc_test.eda.synth.log"
+eda multi synth .../* --parallel ${THREADS} --force-logfile "oc_test.eda.synth.log"
