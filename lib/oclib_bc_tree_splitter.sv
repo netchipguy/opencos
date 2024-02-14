@@ -6,15 +6,20 @@
 module oclib_bc_tree_splitter
   #(
     parameter                        type BcType = oclib_pkg::bc_8b_bidi_s,
+    parameter                        type UpProtocol = oclib_pkg::csr_32_s,
+    parameter                        type DownProtocol = oclib_pkg::csr_32_s,
+    localparam integer               UpProtocolWidth = $bits(UpProtocol), // wave debug
+    localparam integer               DownProtocolWidth = $bits(DownProtocol), // wave debug
     parameter bit                    DetectReset = oclib_pkg::False,
     parameter bit                    RequestReset = oclib_pkg::False,
     parameter int                    Outputs = 8,
+                                     `OC_LOCALPARAM_SAFE(Outputs),
     localparam integer               BlockIdBits = oclib_pkg::BlockIdBits,
     localparam integer               BlockBytes = (BlockIdBits/8),
     localparam [BlockIdBits-1:0]     DefaultKey = { BlockIdBits {1'b1} },
     localparam [BlockIdBits-1:0]     DefaultMask = { BlockIdBits {1'b0} },
-    parameter [BlockBytes-1:0] [7:0] OutputBlockIdKey [Outputs-1:0] = '{ Outputs { DefaultKey } }, // default is output #
-    parameter [BlockBytes-1:0] [7:0] OutputBlockIdMask [Outputs-1:0] = '{ Outputs { DefaultMask } }, // default exact match
+    parameter [BlockBytes-1:0] [7:0] OutputBlockIdKey [0:OutputsSafe-1] = '{ OutputsSafe { DefaultKey } }, // default is output #
+    parameter [BlockBytes-1:0] [7:0] OutputBlockIdMask [0:OutputsSafe-1] = '{ OutputsSafe { DefaultMask } }, // default exact match
     parameter integer                SyncCycles = 0,
     parameter bit                    ResetSync = oclib_pkg::False,
     parameter integer                ResetPipeline = 0
@@ -24,8 +29,8 @@ module oclib_bc_tree_splitter
    input        reset,
    input        BcType upIn,
    output       BcType upOut,
-   output       BcType downOut [Outputs-1:0],
-   input        BcType downIn [Outputs-1:0],
+   output       BcType downOut [0:OutputsSafe-1],
+   input        BcType downIn [0:OutputsSafe-1],
    output logic resetRequest
    );
 
@@ -37,7 +42,7 @@ module oclib_bc_tree_splitter
   logic [BlockBytes-1:0] [7:0] block;
   logic [7:0]                    length;
   logic [7:0]                    counter;
-  logic [Outputs-1:0]            mask;
+  logic [OutputsSafe-1:0]        mask;
 
   enum logic [2:0] { StLength, StBlock, StCalcMask,
                      StOutLength, StOutBlock, StOutCopy, StOutCopyWait } state;
@@ -64,10 +69,13 @@ module oclib_bc_tree_splitter
       downOut[i].data = downOutInternal.data;
       downOut[i].valid = downOutInternal.valid && mask[i];
       // this reverse path vvvv is really bad for now
-      downOut[i].ready = upIn.ready;
+      downOut[i].ready = downOutInternal.ready;
       if (downIn[i].valid) begin
         downInInternal.valid = 1'b1;
         downInInternal.data = downIn[i].data;
+      end
+      if (downIn[i].ready && mask[i]) begin
+        downInInternal.ready = 1'b1;
       end
     end
   end
@@ -107,7 +115,7 @@ module oclib_bc_tree_splitter
           if (upIn.valid && upOut.ready) begin
             block <= { block[BlockBytes-2:0], upIn.data };
             counter <= (counter + 'd1);
-            if (counter == 'd3) begin
+            if (counter == (BlockBytes-1)) begin
               state <= StCalcMask;
             end
           end
@@ -124,7 +132,7 @@ module oclib_bc_tree_splitter
           downOutInternal.valid <= 1'b1;
           if (downOutInternal.valid && downInInternal.ready) begin
             downOutInternal.data <= block[counter];
-            counter <= (counter + 'd1);
+            //counter <= (counter + 'd1);
             state <= StOutBlock;
           end
         end // StOutLength
@@ -135,7 +143,7 @@ module oclib_bc_tree_splitter
             downOutInternal.data <= block[counter];
             counter <= (counter + 'd1);
             if (counter == (BlockBytes-1)) begin
-              // we expect counter be to at 4 (BlockBytes) entering the next state
+              // we expect counter be to at 2 (BlockBytes) entering the next state
               state <= StOutCopy;
               downOutInternal.valid <= 1'b0;
               upOut.ready <= 1'b1;
@@ -158,7 +166,7 @@ module oclib_bc_tree_splitter
           // we are showing upOut.ready = 0, downOutInternal.valid = 1
           if (downInInternal.ready) begin
             downOutInternal.valid <= 1'b0;
-            if (counter == length) begin
+            if (counter == (length-1)) begin
               // for now we are not very smart, we just split the downstream and OR together all the upstream
               // which works only because downstream never speak until spoken to.  Eventually we will want
               // a separate machine listening to the inputs and at least collecting error/interrupt info.
@@ -172,6 +180,29 @@ module oclib_bc_tree_splitter
         end // StOutCopyWait
 
       endcase // case (state)
+
+      // here's the "not very smart" upwards copy logic
+
+      if (!upOut.valid) begin
+        // we are not showing any data upwards
+        if (downOutInternal.ready && downInInternal.valid) begin
+          // we are being give data from downstream
+          upOut.valid <= 1'b1;
+          upOut.data <= downInInternal.data;
+          downOutInternal.ready <= 1'b0; // not accepting more now
+        end
+        else begin
+          downOutInternal.ready <= 1'b1;
+        end
+      end
+      else begin
+        // we are showing data upwards
+        if (upIn.ready) begin // and it's being accepted
+          upOut.valid <= 1'b0;
+          downOutInternal.ready <= 1'b1;
+        end
+      end
+
     end // else: !if(resetSync)
   end // always_ff @ (posedge clock)
 

@@ -4,6 +4,7 @@
 `include "top/oc_top_pkg.sv"
 `include "lib/oclib_defines.vh"
 `include "lib/oclib_pkg.sv"
+`include "lib/oclib_uart_pkg.sv"
 
 module oc_cos
   #(
@@ -24,8 +25,14 @@ module oc_cos
     // *** TOP CLOCK ***
     parameter integer ClockTop = oc_top_pkg::ClockIdSingleEndedRef(0),
 
+    // *** CHIPMON ***
+    parameter integer ChipMonCount = 0,
+                      `OC_LOCALPARAM_SAFE(ChipMonCount),
+    parameter bit     ChipMonCsrEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
+    parameter bit     ChipMonI2CEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
+
     // *** LED ***
-    parameter integer LedCount = 3,
+    parameter integer LedCount = 0,
                       `OC_LOCALPARAM_SAFE(LedCount),
 
     // *** UART ***
@@ -39,31 +46,44 @@ module oc_cos
     // Configuring OC_COS internals which board can override in target-specific ways
     // *******************************************************************************
 
-    // *** Format of Top-Level CSR bus ***
+    // *** Physical type of Top-Level CSR bus (can be csr_*_s or bc_*_s) ***
     parameter         type CsrTopType = oclib_pkg::bc_8b_bidi_s,
     parameter         type CsrTopFbType = oclib_pkg::bc_8b_bidi_s,
+    // *** Message carried on Top-Level CSR bus (must be csr_*_s) ***
     parameter         type CsrTopProtocol = oclib_pkg::csr_32_tree_s,
-    parameter         type CsrTopFbProtocol = oclib_pkg::csr_32_tree_fb_s
+
+    // *** Default reset pipelining for top blocks (which will be on a 100-200MHz refclk)
+    parameter int     DefaultTopResetPipeline = 2
     )
   (
    // *** REFCLOCK ***
-   input [RefClockCountSafe-1:0]    clockRef,
+   input [RefClockCountSafe-1:0]       clockRef,
    // *** RESET ***
-   input                            hardReset,
+   input                               hardReset,
+   // *** CHIPMON ***
+   input [ChipMonCountSafe-1:0]        chipMonScl = {ChipMonCountSafe{1'b1}},
+   output logic [ChipMonCountSafe-1:0] chipMonSclTristate,
+   input [ChipMonCountSafe-1:0]        chipMonSda = {ChipMonCountSafe{1'b1}},
+   output logic [ChipMonCountSafe-1:0] chipMonSdaTristate,
    // *** LED ***
-   output logic [LedCountSafe-1:0]  ledOut,
+   output logic [LedCountSafe-1:0]     ledOut,
    // *** UART ***
-   input [UartCountSafe-1:0]        uartRx,
-   output logic [UartCountSafe-1:0] uartTx
-   );
+   input [UartCountSafe-1:0]           uartRx,
+   output logic [UartCountSafe-1:0]    uartTx,
+   // *** MISC ***
+   output logic                        thermalWarning,
+   output logic                        thermalError
+  );
 
   // *******************************************************************************
   // *** RESOURCE CALCULATIONS ***
 
-  localparam integer             BlockFirstLed = 0;
-  localparam integer             BlockTopCount = (BlockFirstLed + (LedCount ? 1 : 0)); // we drive all LEDs from one IP
+  localparam integer             BlockFirstChipMon = 0;
+  localparam integer             BlockFirstLed = (BlockFirstChipMon + ChipMonCount);
+  localparam integer             BlockTopCount = (BlockFirstLed + (LedCount ? 1 : 0)); // all LEDs are on one IP
   localparam integer             BlockUserCount = 0;
   localparam integer             BlockCount = (BlockTopCount + BlockUserCount);
+  `OC_LOCALPARAM_SAFE(BlockCount);
 
   // *******************************************************************************
   // *** REFCLOCK ***
@@ -96,17 +116,20 @@ module oc_cos
   // this is between uart
   localparam                     type UartControlBcType = oclib_pkg::bc_8b_bidi_s;
   UartControlBcType              uartBcOut, uartBcIn;
+  localparam integer             UartErrorWidth = oclib_uart_pkg::ErrorWidth;
+  logic [UartErrorWidth-1:0]     uartError;
 
   if (EnableUartControl) begin : uart_control
-    oc_uart_control #(.ClockHz(ClockTopHz),
-                      .Baud(UartBaud[UartControl]),
-                      .UartControlBcType(UartControlBcType),
-                      .UartControlProtocol(CsrTopProtocol),
-                      .BlockTopCount(BlockTopCount),
-                      .BlockUserCount(BlockUserCount),
-                      .ResetSync(oclib_pkg::False) )
+    oc_uart_control
+      #(.ClockHz(ClockTopHz),
+        .Baud(UartBaud[UartControl]),
+        .UartControlBcType(UartControlBcType),
+        .UartControlProtocol(CsrTopProtocol),
+        .BlockTopCount(BlockTopCount),
+        .BlockUserCount(BlockUserCount),
+        .ResetSync(oclib_pkg::False) )
     uCONTROL (.clock(clockTop), .reset(resetTop),
-              .resetOut(resetFromUartControl),
+              .resetOut(resetFromUartControl), .uartError(uartError),
               .uartRx(uartRx[UartControl]), .uartTx(uartTx[UartControl]),
               .bcOut(uartBcOut), .bcIn(uartBcIn));
   end
@@ -118,12 +141,14 @@ module oc_cos
   // *******************************************************************************
   // *** TOP_CSR_SPLIT ***
 
-  CsrTopType                     csrTop [BlockCount];
-  CsrTopFbType                   csrTopFb [BlockCount];
+  CsrTopType                     csrTop [BlockCountSafe];
+  CsrTopFbType                   csrTopFb [BlockCountSafe];
   logic                          resetFromTopCsrSplitter;
 
   oclib_csr_tree_splitter #(.CsrInType(UartControlBcType), .CsrInFbType(UartControlBcType),
+                            .CsrInProtocol(CsrTopProtocol),
                             .CsrOutType(CsrTopType), .CsrOutFbType(CsrTopFbType),
+                            .CsrOutProtocol(CsrTopProtocol),
                             .Outputs(BlockCount) )
   uTOP_CSR_SPLITTER (.clock(clockTop), .reset(resetTop),
                      .resetRequest(resetFromTopCsrSplitter),
@@ -131,11 +156,32 @@ module oc_cos
                      .out(csrTop), .outFb(csrTopFb));
 
   // *******************************************************************************
+  // *** CHIPMON ***
+
+  logic [ChipMonCountSafe-1:0]   chipMonThermalWarning;
+  logic [ChipMonCountSafe-1:0]   chipMonThermalError;
+  logic                          chipMonMergedThermalWarning;
+  logic                          chipMonMergedThermalError;
+  for (genvar i=0; i<ChipMonCount; i++) begin : chipmon
+    oc_chipmon #(.ClockHz(ClockTopHz),
+                 .CsrType(CsrTopType), .CsrFbType(CsrTopFbType), .CsrProtocol(CsrTopProtocol),
+                 .ResetSync(oclib_pkg::False), .ResetPipeline(DefaultTopResetPipeline))
+    uCHIPMON (.clock(clockTop), .reset(resetTop),
+              .csr(csrTop[BlockFirstChipMon+i]), .csrFb(csrTopFb[BlockFirstChipMon+i]),
+              .scl(chipMonScl[i]), .sclTristate(chipMonSclTristate[i]),
+              .sda(chipMonSda[i]), .sdaTristate(chipMonSdaTristate[i]),
+              .thermalWarning(chipMonThermalWarning[i]), .thermalError(chipMonThermalError[i]));
+  end
+  assign chipMonMergedThermalWarning = (ChipMonCount ? (|chipMonThermalWarning) : 1'b0);
+  assign chipMonMergedThermalError = (ChipMonCount ? (|chipMonThermalError) : 1'b0);
+
+  // *******************************************************************************
   // *** LED ***
 
   if (LedCount) begin : led
     oc_led #(.ClockHz(ClockTopHz), .LedCount(LedCount),
-             .CsrType(CsrTopType), .CsrFbType(CsrTopFbType))
+             .CsrType(CsrTopType), .CsrFbType(CsrTopFbType), .CsrProtocol(CsrTopProtocol),
+             .ResetSync(oclib_pkg::False), .ResetPipeline(DefaultTopResetPipeline))
     uLED (.clock(clockTop), .reset(resetTop),
           .csr(csrTop[BlockFirstLed]), .csrFb(csrTopFb[BlockFirstLed]),
           .ledOut(ledOut));
@@ -143,6 +189,12 @@ module oc_cos
   else begin
     assign ledOut = '0;
   end
+
+  // *******************************************************************************
+  // *** Merge Error Status ***
+
+  assign thermalError = 1'b0;
+  assign thermalWarning = chipMonMergedThermalWarning;
 
   // *******************************************************************************
   // *** idle unused UARTs for now ***

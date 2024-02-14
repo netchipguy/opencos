@@ -24,6 +24,12 @@ module oc_cos_test
     // *** TOP CLOCK ***
     parameter integer ClockTop = oc_top_pkg::ClockIdSingleEndedRef(0),
 
+    // *** CHIPMON ***
+    parameter integer ChipMonCount = 1,
+                      `OC_LOCALPARAM_SAFE(ChipMonCount),
+    parameter bit     ChipMonCsrEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
+    parameter bit     ChipMonI2CEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
+
     // *** LED ***
     parameter integer LedCount = 3,
                       `OC_LOCALPARAM_SAFE(LedCount),
@@ -55,19 +61,27 @@ module oc_cos_test
   // *** TESTBENCH STATUS ***
   logic               error = 0;
 
-   // *** REFCLOCK ***
+  // *** REFCLOCK ***
   logic [RefClockCountSafe-1:0] clockRef;
-   // *** RESET ***
+  // *** RESET ***
   logic                         hardReset;
-   // *** LED ***
+  // *** CHIPMON ***
+  logic [ChipMonCountSafe-1:0]  chipMonScl = {ChipMonCountSafe{1'b1}};
+  logic [ChipMonCountSafe-1:0]  chipMonSclTristate;
+  logic [ChipMonCountSafe-1:0]  chipMonSda = {ChipMonCountSafe{1'b1}};
+  logic [ChipMonCountSafe-1:0]  chipMonSdaTristate;
+  // *** LED ***
   logic [LedCountSafe-1:0]      ledOut;
-   // *** UART ***
+  // *** UART ***
   logic [UartCountSafe-1:0]     uartRx;
   logic [UartCountSafe-1:0]     uartTx;
+  // *** MISC ***
+  logic                         thermalWarning;
+  logic                         thermalError;
 
 
-  integer                           blockTopCount = 0;
-  integer                           blockUserCount = 0;
+  integer                       blockTopCount = 0;
+  integer                       blockUserCount = 0;
 
 
   for (genvar i=0; i<RefClockCount; i++) begin
@@ -83,6 +97,7 @@ module oc_cos_test
            .RefClockCount(RefClockCount),
            .RefClockHz(RefClockHz),
            .ClockTop(ClockTop),
+           .ChipMonCount(ChipMonCount),
            .LedCount(LedCount),
            .UartCount(UartCount),
            .UartBaud(UartBaud),
@@ -92,9 +107,16 @@ module oc_cos_test
   uDUT (
         .clockRef(clockRef),
         .hardReset(hardReset),
+        .chipMonScl(chipMonScl),
+        .chipMonSclTristate(chipMonSclTristate),
+        .chipMonSda(chipMonSda),
+        .chipMonSdaTristate(chipMonSdaTristate),
         .ledOut(ledOut),
         .uartRx(uartRx),
-        .uartTx(uartTx) );
+        .uartTx(uartTx),
+        .thermalWarning(thermalWarning),
+        .thermalError(thermalError)
+        );
 
   task TestExpectBanner();
     uCONTROL_UART.Expect(8'h0d);
@@ -245,7 +267,7 @@ module oc_cos_test
     $display("%t %m: BuildDate          : %08x", $realtime, temp32);
     uCONTROL_UART.ReceiveEnter();
     uCONTROL_UART.ReceiveInt32(temp32);
-    $display("%t %m: BuildTime          :   %02x:%02x", $realtime, temp32[31:24], temp32[23:16]);
+    $display("%t %m: BuildTime          :    %02x:%02x", $realtime, temp32[31:24], temp32[23:16]);
     $display("%t %m: TargetVendor       :     %04x", $realtime, temp32[15:0]);
     uCONTROL_UART.ReceiveEnter();
     uCONTROL_UART.ReceiveInt32(temp32);
@@ -275,7 +297,10 @@ module oc_cos_test
     TestExpectIdle();
   endtask // TestInfo
 
-  task CsrRead(input [oclib_pkg::BlockIdBits-1:0] block, input [31:0] address, output logic [31:0] data);
+  task CsrRead(input [oclib_pkg::BlockIdBits-1:0] block,
+               input [oclib_pkg::SpaceIdBits-1:0] space,
+               input [31:0]                       address,
+               output logic [31:0]                data);
     CsrTopProtocol csr;
     CsrTopFbProtocol csrFb;
     localparam int RequestBytes = (($bits(csr)+7)/8);
@@ -283,8 +308,10 @@ module oc_cos_test
     logic [0:RequestBytes-1] [7:0] payloadRequest;
     logic [0:ResponseBytes-1] [7:0] payloadResponse;
 
-    $display("%t %m: *** Reading [%08x] => ...", $realtime, address);
+    $display("%t %m: *** Reading [%02x][%1x][%08x] => ...", $realtime, block, space, address);
     csr = '0;
+    csr.toblock = block;
+    csr.space = space;
     csr.read = 1;
     csr.address = address;
     csr.wdata = '0;
@@ -295,17 +322,21 @@ module oc_cos_test
     uCONTROL_UART.ReceiveCheck(ResponseBytes+1);
     for (int i=0; i<ResponseBytes; i++) uCONTROL_UART.Receive(payloadResponse[i]);
     csrFb = payloadResponse;
-    `OC_ASSERT(csrFb.ready == 1);
-    `OC_ASSERT(csrFb.error == 0);
+    `OC_ASSERT_EXPECTED(csrFb.ready,1);
+    `OC_ASSERT_EXPECTED(csrFb.error,0);
     data = csrFb.rdata;
-    $display("%t %m: *** Read    [%08x] => %08x", $realtime, address, data);
+    $display("%t %m: *** Read    [%02x][%1x][%08x] => %08x", $realtime, block, space, address, data);
     uCONTROL_UART.WaitForIdle();
     uCONTROL_UART.SendEnter();
     TestExpectPrompt();
   endtask
 
-  task CsrReadCheck(input [oclib_pkg::BlockIdBits-1:0] block, input [31:0] address, input [31:0] data,
-                    input ready = 1, input error = 0);
+  task CsrReadCheck(input [oclib_pkg::BlockIdBits-1:0] block,
+                    input [oclib_pkg::SpaceIdBits-1:0] space,
+                    input [31:0]                       address,
+                    input [31:0]                       data,
+                    input                              ready = 1,
+                    input                              error = 0);
     CsrTopProtocol csr;
     CsrTopFbProtocol csrFb;
     localparam int RequestBytes = (($bits(csr)+7)/8);
@@ -313,9 +344,11 @@ module oc_cos_test
     logic [0:RequestBytes-1] [7:0] payloadRequest;
     logic [0:ResponseBytes-1] [7:0] payloadResponse;
 
-    $display("%t %m: *** Expecting [%08x] => %08x", $realtime, address, data);
+    $display("%t %m: *** Expecting [%02x][%1x][%08x] => %08x", $realtime, block, space, address, data);
     csr = '0;
     csr.read = 1;
+    csr.toblock = block;
+    csr.space = space;
     csr.address = address;
     csr.wdata = '0;
     payloadRequest = csr;
@@ -325,25 +358,33 @@ module oc_cos_test
     uCONTROL_UART.ReceiveCheck(ResponseBytes+1);
     for (int i=0; i<ResponseBytes; i++) uCONTROL_UART.Receive(payloadResponse[i]);
     csrFb = payloadResponse;
-    `OC_ASSERT(csrFb.ready == ready);
-    `OC_ASSERT(csrFb.error == error);
-    `OC_ASSERT(csrFb.rdata == data);
+    `OC_ASSERT_EQUAL(csrFb.ready, ready);
+    `OC_ASSERT_EQUAL(csrFb.error, error);
+    `OC_ASSERT_EQUAL(csrFb.rdata, data);
     uCONTROL_UART.WaitForIdle();
     uCONTROL_UART.SendEnter();
     TestExpectPrompt();
   endtask
 
-  task CsrWrite(input [oclib_pkg::BlockIdBits-1:0] block, input [31:0] address, input [31:0] data);
-    CsrTopProtocol csr;
+  task CsrWrite(input [oclib_pkg::BlockIdBits-1:0] block,
+                input [oclib_pkg::SpaceIdBits-1:0] space,
+                input [31:0]                       address,
+                input [31:0]                       data,
+                input [31:0]                       rdata = '0,
+                input                              ready = 1,
+                input                              error = 0);
+     CsrTopProtocol csr;
     CsrTopFbProtocol csrFb;
     localparam int RequestBytes = (($bits(csr)+7)/8);
     localparam int ResponseBytes = (($bits(csrFb)+7)/8);
     logic [0:RequestBytes-1] [7:0] payloadRequest;
     logic [0:ResponseBytes-1] [7:0] payloadResponse;
 
-    $display("%t %m: *** Writing   [%08x] <= %08x", $realtime, address, data);
+    $display("%t %m: *** Writing  [%02x][%1x][%08x] <= %08x", $realtime, block, space, address, data);
     csr = '0;
     csr.write = 1;
+    csr.toblock = block;
+    csr.space = space;
     csr.address = address;
     csr.wdata = data;
     payloadRequest = csr;
@@ -353,16 +394,16 @@ module oc_cos_test
     uCONTROL_UART.ReceiveCheck(ResponseBytes+1);
     for (int i=0; i<ResponseBytes; i++) uCONTROL_UART.Receive(payloadResponse[i]);
     csrFb = payloadResponse;
-    `OC_ASSERT(csrFb.ready == 1);
-    `OC_ASSERT(csrFb.error == 0);
-    `OC_ASSERT(csrFb.rdata == 0);
+    `OC_ASSERT_EQUAL(csrFb.ready, ready);
+    `OC_ASSERT_EQUAL(csrFb.error, error);
+    `OC_ASSERT_EQUAL(csrFb.rdata, rdata);
     uCONTROL_UART.WaitForIdle();
     uCONTROL_UART.SendEnter();
     TestExpectPrompt();
   endtask
 
   integer                           foundPlls = 0;
-  integer                           foundChipmons = 0;
+  integer                           foundChipMons = 0;
   integer                           foundProtects = 0;
   integer                           foundIics = 0;
   integer                           foundLeds = 0;
@@ -375,35 +416,54 @@ module oc_cos_test
     logic [15:0] blockType;
     logic [15:0] blockParams;
     logic [31:0] readData;
-    int          b, i;
+    int          b, s, i;
     $display("%t %m: ******************************************", $realtime);
     $display("%t %m: Enumerating %0d top blocks", $realtime, blockTopCount);
     $display("%t %m: ******************************************", $realtime);
     for (b=0; b<blockTopCount; b++) begin
-      CsrRead(b, 32'h0, {blockType, blockParams});
-      if (0) begin
+
+      logic [7:0] InternalReference;
+      $display("%t %m: ****************************", $realtime);
+      $display("%t %m: Reading Block %0d...", $realtime, b);
+      CsrRead(b, 0, 32'h0, {blockType, blockParams});
+
+      if (blockType == oclib_pkg::CsrIdChipMon) begin : chipmon
+        $display("%t %m: Found: Type %04x: CHIPMON #%0d", $realtime, blockType, foundChipMons);
+        InternalReference = blockParams[0];
+        $display("%t %m: Param: InternalReference=%0d", $realtime, InternalReference);
+        $display("%t %m: Reading temperature (not sure what to expect, hard to predict0", $realtime);
+        CsrRead (b, 1, 'h0000, readData); // DRP space
+        if (RefClockHz[ClockTop] == 100_000_000) CsrReadCheck (b, 1, 'h0042, 'h1600); // DRP space
+        if (RefClockHz[ClockTop] == 156_250_000) CsrReadCheck (b, 1, 'h0042, 'h2300); // DRP space
+        CsrReadCheck (b, 1, 'h0050, 'hb834); // DRP space (this is warning temp high, 85c)
+        CsrReadCheck (b, 1, 'h0053, 'hcb00); // DRP space (this is error temp high, 95c)
+        $display("%t %m: ****************************", $realtime);
+        foundChipMons++;
       end
+
       else if (blockType == oclib_pkg::CsrIdLed) begin : led
         logic [7:0] NumLeds;
-        $display("%t %m: ****************************", $realtime);
-        $display("%t %m: Block %0d: Type %04x: LED #%0d", $realtime, b, blockType, foundLeds);
-        $display("%t %m: ****************************", $realtime);
-        CsrRead (b, 'h0004, readData); // Prescale
-        CsrWrite(b, 'h0004,    32'd2); // speed up prescale
+        $display("%t %m: Found: Type %04x: LED #%0d", $realtime, blockType, foundLeds);
         NumLeds = blockParams[7:0];
         $display("%t %m: Param: NumLeds=%0d", $realtime, NumLeds);
-        if (NumLeds>0) CsrWrite(b, 'h0008, 32'h00003f01); // turn LED 0 on, full brightness
-        if (NumLeds>1) CsrWrite(b, 'h000c, 32'h00001f01); // turn LED 1 on, half brightness
-        if (NumLeds>2) CsrWrite(b, 'h0010, 32'h00002f03); // turn LED 2 to heartbeat, 3/4 brightness
+        CsrRead (b, 0, 'h0004, readData); // Prescale
+        $display("%t %m: Csr[4].prescale=%0d, rewriting it to 2...", $realtime, readData);
+        CsrWrite(b, 0, 'h0004,    32'd2); // speed up prescale
+        $display("%t %m: Reading config for each of %0d LEDs", $realtime, NumLeds);
+        if (NumLeds>0) CsrWrite(b, 0, 'h0008, 32'h00003f01); // turn LED 0 on, full brightness
+        if (NumLeds>1) CsrWrite(b, 0, 'h000c, 32'h00001f01); // turn LED 1 on, half brightness
+        if (NumLeds>2) CsrWrite(b, 0, 'h0010, 32'h00002f03); // turn LED 2 to heartbeat, 3/4 brightness
         #50us; // give time for user to look at the pretty patterns
+        $display("%t %m: ****************************", $realtime);
         foundLeds++;
       end
+
       else begin
-        $display("%t %m: ****************************", $realtime);
-        $display("%t %m: Block %0d : Type %04x: UNKNOWN #%0d", $realtime, b, blockType, foundUnknowns);
+        $display("%t %m: Found : Type %04x: UNKNOWN #%0d", $realtime, blockType, foundUnknowns);
         $display("%t %m: ****************************", $realtime);
         foundUnknowns++;
       end
+
     end // for (b=0; b<blockTopCount; b++)
 
   endtask // TestEnumerate
@@ -432,7 +492,8 @@ module oc_cos_test
     TestInfo();
     TestEnumerate();
 
-    #10ms;
+    #1ms;
+    // #10ms; // for watching the LEDs
 
     $display("%t %m: *****************************", $realtime);
     if (error) $display("%t %m: TEST FAILED", $realtime);

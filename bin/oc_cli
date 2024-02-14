@@ -232,8 +232,141 @@ class Block():
             util.warning(f"Didn't understand command: '{command}'")
 
 
-# **** BlockLED
+# **** BlockChipMon
 
+
+class BlockChipMon(Block):
+    def __init__(self, channel, blockid):
+        Block.__init__(self, channel, blockid, "ChipMon")
+
+    def connect(self):
+        Block.connect(self)
+        data = self.csr_read32(0, 0)
+        self.csrid = ((data >> 16) & 0xff)
+        self.internal_reference = ((data >> 16) & 0x1)
+        util.debug(f"Connect: {self} CsrId={self.csrid} InternalReference={self.internal_reference}")
+
+    def chipmon_code_to_temp(self, code):
+        return (((code * 507.5921310)/65536)-279.42657680)
+
+    def chipmon_code_to_volt(self, code, voltagerange="normal"):
+        if voltagerange=="normal":
+            return 3.0*(code/65536)
+        else:
+            return 6.0*(code/65536)
+
+    def command_show(self, parts=[], help_line=False):
+        if help_line: return "Shows high level status of the block in human readable form";
+        t = self.chipmon_code_to_temp(self.csr_read32(1, 0x0))
+        t_min = self.chipmon_code_to_temp(self.csr_read32(1, 0x24))
+        t_max = self.chipmon_code_to_temp(self.csr_read32(1, 0x20))
+        vint = self.chipmon_code_to_volt(self.csr_read32(1, 0x1))
+        vint_min = self.chipmon_code_to_volt(self.csr_read32(1, 0x25))
+        vint_max = self.chipmon_code_to_volt(self.csr_read32(1, 0x21))
+        vaux = self.chipmon_code_to_volt(self.csr_read32(1, 0x2))
+        vaux_min = self.chipmon_code_to_volt(self.csr_read32(1, 0x26))
+        vaux_max = self.chipmon_code_to_volt(self.csr_read32(1, 0x22))
+        vbram = self.chipmon_code_to_volt(self.csr_read32(1, 0x6))
+        vbram_min = self.chipmon_code_to_volt(self.csr_read32(1, 0x27))
+        vbram_max = self.chipmon_code_to_volt(self.csr_read32(1, 0x23))
+        util.info(f"Temperature : {t:5.1f}C (seen {t_min:5.1f}C - {t_max:5.1f}C)")
+        util.info(f"VCCint      : {vint:5.3f}V (seen {vint_min:5.3f}V - {vint_max:5.3f}V)")
+        util.info(f"VCCaux      : {vaux:5.3f}V (seen {vaux_min:5.3f}V - {vaux_max:5.3f}V)")
+        util.info(f"VCCbram     : {vbram:5.3f}V (seen {vbram_min:5.3f}V - {vbram_max:5.3f}V)")
+
+    def command_dump(self, parts=[], help_line=False):
+        if help_line: return "Dumps detailed config/status info of the block in human readable form";
+        self.info(f"Dumping {self}:")
+        self.dump_reg(0, 0x0000, "OcID", [ [31,16,"ID"],
+                                           [0,0,"INTERNAL_REF"] ])
+        self.dump_reg(0, 0x0001, "OcChipMon0", [ [29,29,"JTAG_BUSY"], [29,29,"JTAG_MODIFIED"],
+                                                 [28,28,"JTAG_LOCKED"], [0,0,"RESET"] ])
+        self.dump_reg(0, 0x0002, "OcChipMon1", [ [31,16,"ALARM"], [0,0,"OVER_TEMP"] ])
+        self.dump_reg(1, 0x003e, "Flags1", [ [3,0,"ALARM[11:8]"] ])
+        self.dump_reg(1, 0x003f, "Flags2", [ [11,11,"JTAG_DISABLE"], [10,10,"JTAG_RESTRICTED"],
+                                             [9,9,"INTERNAL_REFERENCE"],
+                                             [7,4,"ALARM[6:3]"], [3,3,"OVER_TEMP"], [2,0,"ALARM[2:0]"]])
+        self.dump_reg(1, 0x0040, "ConfigReg0", [ [15,15,"DISABLE_CAL"], [13,12,"SAMPLE_AVERAGING"],
+                                                 [11,11,"EXT_MUX_MODE"], [10,10,"BIPOLAR_INPUTS"],
+                                                 [9,9,"EVENT_DRIVEN"], [8,8,"10_CYCLE_SLOW_ACQ"],
+                                                 [5,0,"CHANNEL"] ])
+        self.dump_reg(1, 0x0041, "ConfigReg1", [ [15,12,"SEQUENCER_MODE"], [11,8,"ALARM_DISABLE[6:3]"],
+                                                 [7,4,"CAL[3:2:-:0]"], [3,1,"ALARM_DISABLE[2:0]"],
+                                                 [0,0,"OVER_TEMP_DISABLE"]])
+        self.dump_reg(1, 0x0042, "ConfigReg2", [ [15,8,"ADCCLK_DIV"] ])
+        self.dump_reg(1, 0x0043, "ConfigReg3", [ [14,8,"I2C_ADDR"], [7,7,"I2C_ENABLE"],
+                                                 [3,0,"ALARM_DISABLE[11:8]"]])
+        self.dump_reg(1, 0x0044, "ConfigReg4", [ [11,10,"SLOW_EOS"], [9,8,"SLOW_SEQ"], [3,0,"PMBUS_HRIO"]])
+        self.dump_reg(1, 0x0046, "SequenceReg0", [ [3,3,"CHSEL_USER3"], [2,2,"CHSEL_USER2"],
+                                                   [1,1,"CHSEL_USER1"], [0,0,"CHSEL_USER0"] ])
+        self.dump_reg(1, 0x0048, "SequenceReg1", [ [14,14,"CHSEL_BRAM_AVG"], [13,13,"CHSEL_VREFN"],
+                                                   [12,12,"CHSEL_VREFP"], [11,11,"CHSEL_VPVN"],
+                                                   [10,10,"CHSEL_AUX_AVG"], [9,9,"CHSEL_INT_AVG"],
+                                                   [8,8,"CHSEL_TEMP"], [7,7,"CHSEL_VCC_PSAUX"],
+                                                   [6,6,"CHSEL_VCC_PSINTFP"], [5,5,"CHSEL_VCC_PSINTLP"],
+                                                   [0,0,"CHSEL_SYSMON_CAL"] ])
+        self.dump_reg(1, 0x0049, "SequenceReg2", [ [15,0,"CHSEL_AUX[15:0]"]])
+        self.dump_reg(1, 0x007a, "SlowChSel0", [ [14,14,"SLOW_BRAM"], [13,13,"SLOW_VREFN"], [12,12,"SLOW_VREFP"],
+                                                 [11,11,"SLOW_VPVN"], [10,10,"SLOW_AUX_AVG"], [9,9,"SLOW_INT_AVG"],
+                                                 [8,8,"SLOW_TEMP"], [7,7,"SLOW_VCC_PSAUX"], [6,6,"SLOW_VCC_PSINTFP"],
+                                                 [5,5,"SLOW_VCC_PSINTLP"], [0,0,"SLOW_SYSMON"]])
+        self.dump_reg(1, 0x007b, "SlowChSel1", [ [15,0,"SLOW_AUX[15:0]"]])
+        self.dump_reg(1, 0x007c, "SlowChSel2", [ [3,0,"SLOW_USER[3:0]"]])
+        self.dump_reg(1, 0x0047, "AvgChSel0", [ [3,0,"AVG_USER[3:0]"]])
+        self.dump_reg(1, 0x004a, "AvgChSel1", [ [15,0,"AVG_AUX[15:0]"]])
+        self.dump_reg(1, 0x004b, "AvgChSel2", [ [14,14,"AVG_BRAM"],
+                                                [11,11,"AVG_VPVN"], [10,10,"AVG_AUX_AVG"], [9,9,"AVG_INT_AVG"],
+                                                [8,8,"AVG_TEMP"], [7,7,"AVG_VCC_PSAUX"], [6,6,"AVG_VCC_PSINTFP"],
+                                                [5,5,"AVG_VCC_PSINTLP"]])
+        self.dump_reg(1, 0x004c, "SeqInMode0", [ [11,11,"INSEL_VPVN"]])
+        self.dump_reg(1, 0x004d, "SeqInMode1", [ [15,0,"INSEL_AUX[15:0]"]])
+        self.dump_reg(1, 0x004e, "SeqAcq0", [ [11,11,"ACQ_VPVN"]])
+        self.dump_reg(1, 0x004f, "SeqAcq1", [ [15,0,"ACQ_AUX[15:0]"]])
+
+        data = self.dump_reg(1, 0x0050, "Temperature Upper", [], end="")
+        print(" (%.1fC)" % (self.chipmon_code_to_temp(data)))
+        data = self.dump_reg(1, 0x0051, "VCCint Upper", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0052, "VCCaux Upper", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0053, "Over Temp Upper", [], end='')
+        print(" (%.1fC)" % (self.chipmon_code_to_temp(data)))
+        data = self.dump_reg(1, 0x0054, "Temperature Lower", [], end='')
+        print(" (%.1fC)" % (self.chipmon_code_to_temp(data)))
+        data = self.dump_reg(1, 0x0055, "VCCint Lower", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0056, "VCCaux Lower", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0057, "Over Temp Lower", [], end='')
+        print(" (%.1fC)" % (self.chipmon_code_to_temp(data)))
+        data = self.dump_reg(1, 0x0058, "VCCbram Upper", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x005c, "VCCbram Lower", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0000, "Temperature", [], end='')
+        print(" (%.1fC)" % (self.chipmon_code_to_temp(data)))
+        data = self.dump_reg(1, 0x0001, "VCCint", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0002, "VCCaux", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0006, "VCCbram", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0020, "Max Temperature", [], end='')
+        print(" (%.1fC)" % (self.chipmon_code_to_temp(data)))
+        data = self.dump_reg(1, 0x0021, "Max VCCint", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0022, "Max VCCaux", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0023, "Max VCCbram", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0024, "Min Temperature", [], end='')
+        print(" (%.1fC)" % (self.chipmon_code_to_temp(data)))
+        data = self.dump_reg(1, 0x0025, "Min VCCint", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0026, "Min VCCaux", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
+        data = self.dump_reg(1, 0x0027, "Min VCCbram", [], end='')
+        print(" (%.3fV)" % (self.chipmon_code_to_volt(data)))
 
 class BlockLED(Block):
     def __init__(self, channel, blockid):
@@ -243,7 +376,7 @@ class BlockLED(Block):
         Block.connect(self)
         data = self.csr_read32(0, 0)
         self.csrid = ((data >> 16) & 0xffff)
-        self.numled = ((data) & 0xffff)
+        self.numled = ((data) & 0xff)
         util.debug(f"Connect: {self} CsrId={self.csrid} NumLed={self.numled}")
 
     def led_status(self, led):
@@ -314,6 +447,7 @@ class BlockLED(Block):
 # **** Register all the block classes into a table that can be queried by GUI
 
 block_table[0] = { 'name' : 'Unknown'    , 'csrid' :  0, 'handler' : Block           }
+block_table[2] = { 'name' : 'ChipMon'    , 'csrid' :  2, 'handler' : BlockChipMon    }
 block_table[6] = { 'name' : 'LED'        , 'csrid' :  6, 'handler' : BlockLED        }
 
 # **************************************************************
@@ -427,40 +561,26 @@ class SerialChannel(Channel):
         util.debug(f"Channel: Reset, sending 64 '~' chars")
         for i in range(64):
             self.serial_write(b'~')
-        time.sleep(0.1)
+        time.sleep(0.01)
         s = self.serial_read(32) # read anything else that comes in after reset, like prompt, syntax error because partial byte
         util.info(f"Channel: Reset complete")
 
     def serial_write(self, tx_bytes, expect_echo=False, expect_prompt=False, pace_with_echo=False, pace_with_cpu=False):
-        util.debug(f"Channel: writing {tx_bytes} ({len(tx_bytes)} bytes)%s%s" %
-                   (" (echo)" if expect_echo else "",
-                    " (prompt)" if expect_prompt else ""))
-
-        start = time.time()
+        e = " (echo)" if expect_echo else ""
+        p = " (prompt)" if expect_prompt else ""
+        util.debug(f"Channel: writing {tx_bytes} ({len(tx_bytes)} bytes){e}{p}")
         self.ser.write(tx_bytes)
-        written = time.time()
-        echo = written
         if expect_echo:
-            echo = time.time()
             rx_bytes = self.ser.read(len(tx_bytes))
             if rx_bytes != tx_bytes:
                 util.warning(f"Channel: sent {tx_bytes} ({len(tx_bytes)}), expected echo, got: {rx_bytes} ({len(rx_bytes)} bytes)")
         if expect_prompt:
             self.serial_read_prompt()
-            #rx_bytes = self.ser.read(5)
-            #if rx_bytes != b'\r\nOC>':
-            #    util.warning(f"Channel: expected prompt, got: {rx_bytes} ({len(rx_bytes)} bytes)")
-        done = time.time()
-        # print("DEBUG: %.6fs to write, %.6fs for echo, %.6fs total" % (written-start, echo-start, done-start))
 
     def serial_read(self, length=1):
         util.debug(f"Channel: Reading {length} bytes...")
-        start = time.time()
         rx_bytes = self.ser.read(length)
-        doneread = time.time()
         util.debug(f"Channel: Read {rx_bytes} ({len(rx_bytes)} bytes)")
-        done = time.time()
-        # print("DEBUG: %.6fs to read, %.6fs total" % (doneread-start, done-start))
         return rx_bytes
 
     def serial_read_prompt(self):
@@ -542,6 +662,9 @@ class SerialChannel(Channel):
 
     def bc_receive(self):
         b = self.serial_read(1)
+        if len(b) == 0:
+            util.error("Timeout waiting for response, you probably need to 'reset'")
+            raise HandledError
         length = int(b[0])
         message = self.serial_read(length-1)
         return message

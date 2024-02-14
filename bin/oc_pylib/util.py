@@ -204,22 +204,22 @@ def set_debug_level(level):
 # the <<d>> stuff is because we change progname after this is read in.  if we instead infer progname or
 # get it passed somehow, we can avoid this ugliness / performance impact (lots of calls to debug happen)
 def debug(text, level=1, start='<<d>>', end='\n'):
-    if start=='<<d>>': start = f"DEBUG: " + ("[{progname}] " if progname_in_message else "")
+    if start=='<<d>>': start = f"DEBUG: " + (f"[{progname}] " if progname_in_message else "")
     if args['debug'] and ((level==1) or args['verbose'] or (debug_level >= level)):
         print_yellow(f"{start}{text}", end=end)
 
 def info(text, start='<<d>>', end='\n'):
-    if start=='<<d>>': start = f"INFO: " + ("[{progname}] " if progname_in_message else "")
+    if start=='<<d>>': start = f"INFO: " + (f"[{progname}] " if progname_in_message else "")
     if not args['quiet']:
         print_green(f"{start}{text}", end=end)
 
 def warning(text, start='<<d>>', end='\n'):
-    if start=='<<d>>': start = f"WARNING: " + ("[{progname}] " if progname_in_message else "")
+    if start=='<<d>>': start = f"WARNING: " + (f"[{progname}] " if progname_in_message else "")
     args['warnings'] += 1
     print_orange(f"{start}{text}", end=end)
 
 def error(text, error_code=-1, do_exit=True, start='<<d>>', end='\n'):
-    if start=='<<d>>': start = f"ERROR: " + ("[{progname}] " if progname_in_message else "")
+    if start=='<<d>>': start = f"ERROR: " + (f"[{progname}] " if progname_in_message else "")
     args['errors'] += 1
     print_red(f"{start}{text}", end=end)
     if do_exit: exit(error_code)

@@ -63,8 +63,14 @@
 
   `define OC_ASSERT_EXPECTED(v,e) \
   `ifdef SIMULATION \
-  do if (v!==e) begin $display ("%t %m: %s was %x when expecting %x at %s:%0d", $realtime, \
+  do if (v!==e) begin $display ("%t %m: MISMATCH: %s = %x, but expecting %x at %s:%0d", $realtime, \
                                 `"v`", v, e, `__FILE__, `__LINE__); $finish; end while (0) \
+  `endif
+
+  `define OC_ASSERT_EQUAL(a,b) \
+  `ifdef SIMULATION \
+  do if (!(a===b)) begin $display ("%t %m: MISMATCH %s (%x), !== %s (%x) at %s:%0d", $realtime, \
+                                   `"a`", a, `"b`", b, `__FILE__, `__LINE__); $finish; end while (0) \
   `endif
 
 // an assertion that partially implements an error register (without clock / reset, i.e. within !reset part of always_ff block)

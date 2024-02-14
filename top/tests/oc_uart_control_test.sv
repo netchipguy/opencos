@@ -86,7 +86,6 @@ module oc_uart_control_test;
                       .UseClockOut(0)  )
   uCSR_ADAPTER (.clock(clock), .reset(reset),
                 .clockOut(), .resetOut(),
-                .csrSelect(1'b1),
                 .in(dutBcOut), .inFb(dutBcIn),
                 .out(csrTop), .outFb(csrTopFb)  );
 
@@ -98,7 +97,6 @@ module oc_uart_control_test;
                             .CsrOutType(oclib_pkg::csr_32_s), .CsrOutFbType(oclib_pkg::csr_32_fb_s) )
   uCSR_SPLITTER (.clock(clock), .reset(reset),
                  .clockOut(), .resetOut(),
-                 .csrSelect(1'b1),
                  .resetRequest(),
                  .in(csrTop), .inFb(csrTopFb),
                  .out(csr), .outFb(csrFb)  );
@@ -116,7 +114,7 @@ module oc_uart_control_test;
                     .CsrRoBits   ( { 32'hffff_ffff, 32'h0000_0000, 32'h0000_0000, 32'h0000_0000 } ),
                     .CsrWoBits   ( { 32'h0000_0000, 32'h0000_0000, 32'h0f00_0000, 32'h0000_0000 } )  )
   uCSR_ARRAY (.clock(clock), .reset(reset), .clockCsrConfig(),
-              .csr(csr[0]), .csrFb(csrFb[0]), .csrSelect(1'b1),
+              .csr(csr[0]), .csrFb(csrFb[0]),
               .csrConfig(csrConfig), .csrStatus(csrStatus),
               .csrRead(csrRead), .csrWrite(csrWrite)  );
 

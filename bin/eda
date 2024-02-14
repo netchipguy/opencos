@@ -8,11 +8,12 @@ import os
 import sys
 import shutil
 import re
-import oc_pylib.util as util
 import queue
 import threading
 import signal
 import curses
+
+import oc_pylib.util as util
 
 class Command:
     def __init__(self, config, command_name):
@@ -410,7 +411,8 @@ class CommandDesign(Command):
             if process_all:  util.error("Didn't understand command token: '%s' in CommandDesign" % (tokens[0]))
             else:            return False # if we aren't trying to process_all, the caller hopefully can take it
 
-        self.defines['OC_SEED'] = "%d" % self.args['seed']
+        self.defines['OC_SEED'] = f"{self.args['seed']}"
+        self.defines['OC_ROOT'] = f"\"{oc_root}\""
 
 class CommandSim(CommandDesign):
 
@@ -927,6 +929,8 @@ class CommandFList(CommandDesign):
         self.args['prefix-v'] = ""
         self.args['prefix-sv'] = ""
         self.args['prefix-vhd'] = ""
+        self.args['single-quote-define'] = False
+        self.args['quote-define'] = True
         self.args['xilinx'] = False # we don't want --xilinx to error, but it doesn't do anything much
 
     def process_tokens(self, tokens, process_all=True):
@@ -944,7 +948,10 @@ class CommandFList(CommandDesign):
                         if self.defines[d] == None:
                             print(f"{self.args['prefix-define']}{d}", file=fo)
                         else:
-                            print(f"{self.args['prefix-define']}\"{d}={self.defines[d]}\"", file=fo)
+                            if self.args['single-quote-define'] : quote = '\''
+                            elif self.args['quote-define'] : quote = '"'
+                            else : quote = ''
+                            print(f"{self.args['prefix-define']}{quote}{d}={self.defines[d]}{quote}", file=fo)
                 if self.args['emit-incdir']:
                     for i in self.incdirs:
                         print(f"{self.args['prefix-incdir']}{i}", file=fo)

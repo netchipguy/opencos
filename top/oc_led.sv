@@ -10,6 +10,7 @@ module oc_led #(
                                   `OC_LOCALPARAM_SAFE(LedCount),
                 parameter         type CsrType = oclib_pkg::csr_32_s,
                 parameter         type CsrFbType = oclib_pkg::csr_32_fb_s,
+                parameter         type CsrProtocol = oclib_pkg::csr_32_s,
                 parameter integer SyncCycles = 3,
                 parameter bit     ResetSync = oclib_pkg::False,
                 parameter integer ResetPipeline = 0
@@ -43,7 +44,7 @@ module oc_led #(
   logic [0:NumCsr-1] [31:0] csrConfig;
   logic [0:NumCsr-1] [31:0] csrStatus;
 
-  oclib_csr_array #(.CsrType(CsrType), .CsrFbType(CsrFbType),
+  oclib_csr_array #(.CsrType(CsrType), .CsrFbType(CsrFbType), .CsrProtocol(CsrProtocol),
                     .NumCsr(NumCsr),
                     .CsrRwBits   ({ 32'h00000000, 32'h000003ff, {LedCount{32'h00073f03}} }),
                     .CsrRoBits   ({ 32'h00000000, 32'h00000000, {LedCount{32'h00000000}} }),
@@ -125,7 +126,7 @@ module oc_led #(
       ledOut[i] <= ((ledMode == 2'b01) ? (ledBright >= tdmValue) :                              // on
                     (ledMode == 2'b10) ? ((ledBlinks > stepCounter[4:2]) &&                     // blink
                                           (ledBright >= tdmValue) && stepCounter[1]) :
-                    (ledMode == 2'b11) ? ((ledBright[5:4] >= intraCounter[1:0]) && heartbeat) : // heartbeat
+                    (ledMode == 2'b11) ? ((ledBright[5:2] >= intraCounter[3:0]) && heartbeat) : // heartbeat
                     1'b0);                                                                      // off
     end
 

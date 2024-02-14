@@ -1,6 +1,8 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
+set parallel_jobs 8
+
 set tt "# ********************************"
 set tt "# create a blank project"
 set tt "# ********************************"
@@ -43,10 +45,12 @@ set tt "# ********************************"
 exec python ${oc_root}/bin/eda flist oc_chip_top --out "[pwd]/build.flist" --force \
     +define+SYNTHESIS \
     +define+OC_LIBRARY_XILINX \
+    +define+OC_LIBRARY_ULTRASCALE_PLUS \
     +define+OC_BOARD_TOP_DEBUG \
     +define+OC_UART_CONTROL_INCLUDE_VIO_DEBUG \
     +define+OC_UART_CONTROL_INCLUDE_ILA_DEBUG \
     --no-emit-incdir \
+    --no-quote-define \
     --prefix-define "oc_set_project_define " \
     --prefix-sv "add_files -norecurse " \
     --prefix-v "add_files -norecurse " \
@@ -54,6 +58,15 @@ exec python ${oc_root}/bin/eda flist oc_chip_top --out "[pwd]/build.flist" --for
 
 source build.flist
 
+
+set tt "# ********************************"
+set tt "# check oc_chip_top is the top"
+set tt "# ********************************"
+
+if { [lsearch -exact [find_top] "oc_chip_top"] == -1 } {
+    puts "ERROR: \[BUILD.TCL\] The top level is not oc_chip_top, prob there is a syntax error somewhere"
+    exit -1
+}
 
 set tt "# ********************************"
 set tt "# add top level constraint files"
@@ -82,7 +95,7 @@ set tt "# SYNTH design"
 set tt "# ********************************"
 
 reset_run synth_1
-launch_runs synth_1 -jobs 6
+launch_runs synth_1 -jobs $parallel_jobs
 wait_on_run synth_1
 if {[get_property PROGRESS [get_runs synth_1]] != "100%"} {
     error "ERROR: synth_1 failed"
@@ -92,7 +105,7 @@ set tt "# ********************************"
 set tt "# IMPLEMENT design"
 set tt "# ********************************"
 
-launch_runs impl_1 -jobs 6
+launch_runs impl_1 -jobs $parallel_jobs
 wait_on_run impl_1
 if {[get_property PROGRESS [get_runs impl_1]] != "100%"} {
     error "ERROR: impl_1 failed"

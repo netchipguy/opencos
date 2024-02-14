@@ -3,6 +3,7 @@ oc_cos:
         oc_cos.sv
         oc_uart_control
         oc_chip_status
+        oc_chipmon
         oc_led
         ../lib/oclib_reset
         ../lib/oclib_csr_tree_splitter

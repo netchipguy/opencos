@@ -115,6 +115,11 @@ oclib_csr_synchronizer:
         oclib_module_reset
         oclib_synchronizer
 
+oclib_csr_space_splitter:
+        oclib_csr_space_splitter.sv
+        oclib_csr_adapter
+        oclib_module_reset
+
 oclib_csr_tree_splitter:
         oclib_csr_tree_splitter.sv
         oclib_bc_bidi_adapter

@@ -10,6 +10,7 @@ module oclib_csr_array
     parameter integer                      CsrAlignment = oclib_pkg::DefaultCsrAlignment,
     parameter                              type CsrType = oclib_pkg::csr_32_s,
     parameter                              type CsrFbType = oclib_pkg::csr_32_fb_s,
+    parameter                              type CsrProtocol = oclib_pkg::csr_32_s,
     parameter integer                      SyncCycles = 3,
     parameter bit                          ResetSync = oclib_pkg::False,
     parameter integer                      ResetPipeline = 0,
@@ -58,8 +59,8 @@ module oclib_csr_array
 
   if (type(CsrType) != type(oclib_pkg::csr_32_s)) begin
 
-    oclib_csr_adapter #(.CsrInType(CsrType), .CsrInFbType(CsrFbType),
-                        .CsrOutType(), .CsrOutFbType())
+    oclib_csr_adapter #(.CsrInType(CsrType), .CsrInFbType(CsrFbType), .CsrInProtocol(CsrProtocol),
+                        .CsrOutType(oclib_pkg::csr_32_s), .CsrOutFbType(oclib_pkg::csr_32_fb_s))
     uCSR_ADAPTER (.clock(clock), .reset(resetSync),
                   .in(csr), .inFb(csrFb),
                   .out(csrNormal), .outFb(csrNormalFb));

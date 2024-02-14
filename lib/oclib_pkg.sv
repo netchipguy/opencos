@@ -130,7 +130,7 @@ package oclib_pkg;
   localparam integer              CsrIdBits = 16;
 
   localparam [CsrIdBits-1:0]      CsrIdPll = 'd1;
-  localparam [CsrIdBits-1:0]      CsrIdChipmon = 'd2;
+  localparam [CsrIdBits-1:0]      CsrIdChipMon = 'd2;
   localparam [CsrIdBits-1:0]      CsrIdProtect = 'd3;
   localparam [CsrIdBits-1:0]      CsrIdHbm = 'd4;
   localparam [CsrIdBits-1:0]      CsrIdIic = 'd5;

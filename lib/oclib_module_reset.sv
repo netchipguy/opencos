@@ -8,8 +8,8 @@
 module oclib_module_reset #(parameter integer SyncCycles = 3,
                             parameter bit     ResetSync = oclib_pkg::False,
                             parameter integer ResetPipeline = 0,
-                            parameter bit     DontTouch = oclib_pkg::False,
-                            parameter bit     NoShiftRegister = oclib_pkg::False)
+                            parameter bit     DontTouch = oclib_pkg::True,
+                            parameter bit     NoShiftRegister = oclib_pkg::True)
   (
    input        clock,
    input        in,

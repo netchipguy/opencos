@@ -10,15 +10,25 @@ module oc_chip_top
     // *** MISC ***
     parameter integer Seed = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_SEED,0), // seed to generate varying implementation results
     parameter bit     EnableUartControl = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_ENABLE_UART_CONTROL,1),
+
     // *** REFCLOCK ***
     parameter integer RefClockCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_REFCLOCK_COUNT,1),
     `OC_LOCALPARAM_SAFE(RefClockCount), // we won't need this, though, since it's mandatory to have one refclk for top
     parameter integer RefClockHz [0:RefClockCount-1] = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_REFCLOCK_HZ,{156250000}),
+
     // *** TOP CLOCK ***
     parameter integer ClockTop = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_CLOCK_TOP,oc_top_pkg::ClockIdSingleEndedRef(0)),
+
+    // *** CHIPMON ***
+    parameter integer ChipMonCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_CHIPMON_COUNT,1),
+                      `OC_LOCALPARAM_SAFE(ChipMonCount),
+    parameter bit     ChipMonCsrEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
+    parameter bit     ChipMonI2CEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
+
     // *** LED ***
     parameter integer LedCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_LED_COUNT,3),
     `OC_LOCALPARAM_SAFE(LedCount),
+
     // *** UART ***
     parameter integer UartCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_UART_COUNT,2),
     `OC_LOCALPARAM_SAFE(UartCount),
@@ -45,6 +55,14 @@ module oc_chip_top
   (* dont_touch = "yes" *)
   logic [RefClockCountSafe-1:0] clockRef;
   IBUFDS uIBUF_USER_SI570_CLOCK (.O(clockRef[0]), .I(USER_SI570_CLOCK_P), .IB(USER_SI570_CLOCK_N));
+
+  // *** CHIPMON ***
+  logic [ChipMonCountSafe-1:0]  chipMonScl;
+  logic [ChipMonCountSafe-1:0]  chipMonSclTristate;
+  logic [ChipMonCountSafe-1:0]  chipMonSda;
+  logic [ChipMonCountSafe-1:0]  chipMonSdaTristate;
+  assign chipMonScl = 1'b1;
+  assign chipMonSda = 1'b1;
 
   // *** LED ***
   `OC_STATIC_ASSERT(LedCount<=3);
@@ -105,6 +123,10 @@ module oc_chip_top
            .RefClockHz(RefClockHz),
            // *** TOP CLOCK ***
            .ClockTop(ClockTop),
+           // *** CHIPMON ***
+           .ChipMonCount(ChipMonCount),
+           .ChipMonCsrEnable(ChipMonCsrEnable),
+           .ChipMonI2CEnable(ChipMonI2CEnable),
            // *** LED ***
            .LedCount(LedCount),
            // *** UART ***
@@ -117,6 +139,9 @@ module oc_chip_top
         .clockRef(clockRef),
         // *** RESET ***
         .hardReset(debugReset),
+        // *** CHIPMON ***
+        .chipMonScl(chipMonScl), .chipMonSclTristate(chipMonSclTristate),
+        .chipMonSda(chipMonSda), .chipMonSdaTristate(chipMonSdaTristate),
         // *** LED ***
         .ledOut(ledOut),
         // *** UART ***
