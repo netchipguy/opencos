@@ -21,3 +21,20 @@ oc_uart_control_test:
         ../../sim/ocsim_data_sink
         ../../sim/ocsim_clock
         ../../sim/ocsim_reset
+
+oc_uart_control_csr_32_noc_test:
+        +define+OC_UART_CONTROL_CSR_32_NOC
+        --top=oc_uart_control_test
+        oc_uart_control_test
+
+oc_uart_control_csr_32_tree_test:
+        +define+OC_UART_CONTROL_CSR_32_TREE
+        --top=oc_uart_control_test
+        oc_uart_control_test
+
+oc_cos_test:
+        oc_cos_test.sv
+        ../oc_cos
+        ../../sim/ocsim_uart
+        ../../sim/ocsim_clock
+        ../../sim/ocsim_reset

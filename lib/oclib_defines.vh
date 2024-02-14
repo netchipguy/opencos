@@ -20,11 +20,12 @@
 // ******** SELF DOCUMENTATION
 // *****************************************************************************************
 
-  `define OC_ANNOUNCE_MODULE(m) $display("%m: ANNOUNCE module %-20s", `OC_STRINGIFY(m));
-  `define OC_ANNOUNCE_PARAM_INTEGER(p) $display("%m: ANNOUNCE param %-20s = %0d", `OC_STRINGIFY(p), p);
-  `define OC_ANNOUNCE_PARAM_BIT(p) $display("%m: ANNOUNCE param %-20s = %x", `OC_STRINGIFY(p), p);
-  `define OC_ANNOUNCE_PARAM_REAL(p) $display("%m: ANNOUNCE param %-20s = %.3f", `OC_STRINGIFY(p), p);
-  `define OC_ANNOUNCE_PARAM_REALTIME(p) $display("%m: ANNOUNCE param %-20s = %.3fns", `OC_STRINGIFY(p), p/1ns);
+  `define OC_ANNOUNCE_MODULE(m) $display("%t %m: ANNOUNCE module %-20s", $realtime, `OC_STRINGIFY(m));
+  `define OC_ANNOUNCE_PARAM_INTEGER(p) $display("%t %m: ANNOUNCE param %-20s = %0d", $realtime, `OC_STRINGIFY(p), p);
+  `define OC_ANNOUNCE_PARAM_BIT(p) $display("%t %m: ANNOUNCE param %-20s = %x", $realtime, `OC_STRINGIFY(p), p);
+  `define OC_ANNOUNCE_PARAM_REAL(p) $display("%t %m: ANNOUNCE param %-20s = %.3f", $realtime, `OC_STRINGIFY(p), p);
+  `define OC_ANNOUNCE_PARAM_REALTIME(p) $display("%t %m: ANNOUNCE param %-20s = %.3fns", $realtime, `OC_STRINGIFY(p), p/1ns);
+  `define OC_ANNOUNCE_PARAM_MISC(p) $display("%t %m: ANNOUNCE param %-20s = %p", $realtime, `OC_STRINGIFY(p), p);
 
 // *****************************************************************************************
 // ******** ASSERTIONS

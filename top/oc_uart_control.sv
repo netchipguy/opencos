@@ -9,12 +9,17 @@ module oc_uart_control
   #(
     parameter integer            ClockHz = 100_000_000,
     parameter integer            Baud = 115_200,
-    parameter                    type BcType = oclib_pkg::bc_8b_bidi_s,
+    parameter                    type UartControlBcType = oclib_pkg::bc_8b_bidi_s,
+    parameter                    type UartControlProtocol = oclib_pkg::csr_32_s,
+    parameter                    type UartBcType = oclib_pkg::bc_8b_bidi_s, // if uart is physically far from rest of this block
+    parameter logic [0:1] [7:0]  BlockTopCount = '0,
+    parameter logic [0:1] [7:0]  BlockUserCount = '0,
+    parameter bit                ResetSync = oclib_pkg::False,
     parameter integer            ErrorWidth = oclib_uart_pkg::ErrorWidth,
     parameter bit                ManagerReset = `OC_VAL_ASDEFINED_ELSE(TARGET_MANAGER_RESET, 1),
     parameter integer            ManagerResetLength = `OC_VAL_ASDEFINED_ELSE(TARGET_MANAGER_RESET_LENGTH, 64),
     parameter bit                UptimeCounters = `OC_VAL_ASDEFINED_ELSE(TARGET_UPTIME_COUNTERS, 1),
-    parameter logic [0:1] [7:0]  BuilderID = `OC_VAL_ASDEFINED_ELSE(TARGET_BUILDER_ID, 16'hffff),
+    parameter logic [0:2] [7:0]  BuilderID = `OC_VAL_ASDEFINED_ELSE(TARGET_BUILDER_ID, 24'hffffff),
     parameter logic [0:3] [7:0]  BitstreamID = `OC_VAL_ASDEFINED_ELSE(TARGET_BITSTREAM_ID, 32'h12345678),
     parameter logic [0:3] [7:0]  BuildDate = `OC_VAL_ASDEFINED_ELSE(OC_BUILD_DATE, 32'h20210925),
     parameter logic [0:1] [7:0]  BuildTime = `OC_VAL_ASDEFINED_ELSE(OC_BUILD_TIME, 16'h1200),
@@ -26,10 +31,8 @@ module oc_uart_control
     parameter logic [0:1] [7:0]  TargetVendor = `OC_VAL_ASDEFINED_ELSE(OC_VENDOR, 16'hffff),
     parameter logic [0:1] [7:0]  TargetBoard = `OC_VAL_ASDEFINED_ELSE(OC_BOARD, 16'hffff),
     parameter logic [0:1] [7:0]  TargetLibrary = `OC_VAL_ASDEFINED_ELSE(OC_LIBRARY, 16'hffff),
-    parameter logic [0:15] [7:0] UserSpace = `OC_VAL_ASDEFINED_ELSE(USER_APP_STRING, "none            "),
-    parameter integer            BcCount = 0,
-    parameter integer            UserBcCount = 0,
-    parameter bit                ResetSync = oclib_pkg::True
+    parameter logic [7:0]        BlockProtocol = $bits(oclib_pkg::csr_32_s),
+    parameter logic [0:15] [7:0] UserSpace = `OC_VAL_ASDEFINED_ELSE(USER_APP_STRING, "none            ")
     )
   (
    input                         clock,
@@ -38,8 +41,8 @@ module oc_uart_control
    output logic [ErrorWidth-1:0] uartError,
    input                         uartRx,
    output logic                  uartTx,
-   input                         BcType bcIn,
-   output                        BcType bcOut
+   input                         UartControlBcType bcIn,
+   output                        UartControlBcType bcOut
    );
 
   logic                         vioReset;
@@ -51,16 +54,19 @@ module oc_uart_control
   // Philosophy here is to not backpressure the RX channel.  We dont want to block attempts to
   // reset or resync, and you cannot overrun the RX state machine when following the protocol.
 
-  BcType bcRx, bcTx;
+  UartBcType bcRx, bcTx;
 
-  oclib_uart #(.ClockHz(ClockHz), .Baud(Baud), .BcType(BcType))
+  oclib_uart #(.ClockHz(ClockHz), .Baud(Baud), .BcType(UartBcType))
   uUART (.clock(clock), .reset(resetQ), .error(uartError),
          .rx(uartRx), .tx(uartTx),
          .bcOut(bcRx), .bcIn(bcTx));
 
+
+  // internally we assume sync 8-bit, so convert if necessary
+
   oclib_pkg::bc_8b_bidi_s bcFromUart, bcToUart;
 
-  oclib_bc_bidi_adapter #(.BcAType(BcType), .BcBType(oclib_pkg::bc_8b_bidi_s))
+  oclib_bc_bidi_adapter #(.BcAType(UartBcType), .BcBType(oclib_pkg::bc_8b_bidi_s))
   uUART_BC_ADAPTER (.clock(clock), .reset(resetQ),
                .aIn(bcRx), .aOut(bcTx),
                .bOut(bcFromUart), .bIn(bcToUart));
@@ -125,9 +131,9 @@ module oc_uart_control
   always_comb begin
     case (serialCounter[5:0])
       6'h00   : infoRomData = 8'h01; // Info dump version
-      6'h01   : infoRomData = BcCount;
-      6'h02   : infoRomData = BuilderID[0];
-      6'h03   : infoRomData = BuilderID[1];
+      6'h01   : infoRomData = BuilderID[0];
+      6'h02   : infoRomData = BuilderID[1];
+      6'h03   : infoRomData = BuilderID[2];
       6'h04   : infoRomData = BitstreamID[0];
       6'h05   : infoRomData = BitstreamID[1];
       6'h06   : infoRomData = BitstreamID[2];
@@ -144,6 +150,11 @@ module oc_uart_control
       6'h11   : infoRomData = TargetLibrary[1];
       6'h12   : infoRomData = TargetBoard[0];
       6'h13   : infoRomData = TargetBoard[1];
+      6'h14   : infoRomData = BlockTopCount[0];
+      6'h15   : infoRomData = BlockTopCount[1];
+      6'h16   : infoRomData = BlockUserCount[0];
+      6'h17   : infoRomData = BlockUserCount[1];
+      6'h18   : infoRomData = BlockProtocol;
       6'h20   : infoRomData = UserSpace[0];
       6'h21   : infoRomData = UserSpace[1];
       6'h22   : infoRomData = UserSpace[2];
@@ -290,7 +301,7 @@ module oc_uart_control
   // **************************
 
   oclib_pkg::bc_8b_bidi_s bcIntIn, bcIntOut;
-  oclib_bc_bidi_adapter #(.BcAType(BcType), .BcBType(oclib_pkg::bc_8b_bidi_s))
+  oclib_bc_bidi_adapter #(.BcAType(UartControlBcType), .BcBType(oclib_pkg::bc_8b_bidi_s))
   uINT_BC_ADAPTER (.clock(clock), .reset(resetQ),
                    .aIn(bcIn), .aOut(bcOut),
                    .bOut(bcIntIn), .bIn(bcIntOut));
@@ -354,6 +365,7 @@ module oc_uart_control
           messageMode <= 1'b0;
           nibble <= 1'b0;
           if (bcFromUart.valid) begin
+            // "I" means info in binary, "i" means info in ASCII
             if ((bcFromUart.data | 'h20) == "i") begin // that 'h20 will convert capital to lowercase
               // info dump, if compiled in, wait for enter to confirm
               binaryMode <= !(bcFromUart.data[5]); // this detects the capital without different gates each time
@@ -694,12 +706,14 @@ module oc_uart_control
   oclib_synchronizer uILA_RX_SYNC (.clock(clock), .in(uartRx), .out(uartRxSync));
   oclib_synchronizer uILA_TX_SYNC (.clock(clock), .in(uartTx), .out(uartTxSync));
   `OC_DEBUG_ILA(uILA, clock, 8192, 128, 32,
-                { resetQ, inComment,
+                { uartError,
+                  resetQ, inComment,
                   resetOut, resetCount,
                   bcFromUart, bcToUart,
                   serialCounter,
                   state, nextState },
-                { uartRxSync, uartTxSync,
+                { (|uartError),
+                  uartRxSync, uartTxSync,
                   resetOut, resetQ, blink,
                   bcFromUart, state });
 `endif

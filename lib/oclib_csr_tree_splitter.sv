@@ -6,21 +6,24 @@
 
 module oclib_csr_tree_splitter
   #(
-    parameter         type CsrInType = oclib_pkg::bc_8b_bidi_s,
-    parameter         type CsrInFbType = oclib_pkg::bc_8b_bidi_s,
-    parameter         type CsrOutType = oclib_pkg::bc_8b_bidi_s,
-    parameter         type CsrOutFbType = oclib_pkg::bc_8b_bidi_s,
-    parameter integer Outputs = 8,
-    parameter integer InputBufferStages = 0,
-    parameter integer OutputBufferStages = 0,
-    parameter integer OutputBufferStagesEach [Outputs-1:0] = '{ Outputs { OutputBufferStages } },
-    parameter [31:0]  OutputBlockIdKey [Outputs-1:0]  = '{ Outputs { 32'hffffffff } }, // default is same as output
-    parameter [31:0]  OutputBlockIdMask [Outputs-1:0]  = '{ Outputs { 32'h00000000 } }, // default is same as output
-    parameter bit     UseClockOut = oclib_pkg::False,
-    parameter integer SyncCycles = 3,
-    parameter bit     ResetSync = UseClockOut,
-    parameter integer ResetPipeline = 0,
-    parameter bit     UseCsrSelect = oclib_pkg::False
+    parameter                    type CsrInType = oclib_pkg::bc_8b_bidi_s,
+    parameter                    type CsrInFbType = oclib_pkg::bc_8b_bidi_s,
+    parameter                    type CsrOutType = oclib_pkg::bc_8b_bidi_s,
+    parameter                    type CsrOutFbType = oclib_pkg::bc_8b_bidi_s,
+    parameter integer            Outputs = 8,
+    parameter integer            InputBufferStages = 0,
+    parameter integer            OutputBufferStages = 0,
+    parameter integer            OutputBufferStagesEach [Outputs-1:0] = '{ Outputs { OutputBufferStages } },
+    localparam integer           BlockIdBits = oclib_pkg::BlockIdBits,
+    localparam [BlockIdBits-1:0] DefaultKey = { BlockIdBits {1'b1} },
+    localparam [BlockIdBits-1:0] DefaultMask = { BlockIdBits {1'b0} },
+    parameter [BlockIdBits-1:0]  OutputBlockIdKey [Outputs-1:0] = '{ Outputs { DefaultKey } }, // default is output #
+    parameter [BlockIdBits-1:0]  OutputBlockIdMask [Outputs-1:0] = '{ Outputs { DefaultMask } }, // default exact match
+    parameter bit                UseClockOut = oclib_pkg::False,
+    parameter integer            SyncCycles = 3,
+    parameter bit                ResetSync = UseClockOut,
+    parameter integer            ResetPipeline = 0,
+    parameter bit                UseCsrSelect = oclib_pkg::False
     )
   (
    input        clock,
@@ -117,8 +120,8 @@ module oclib_csr_tree_splitter
           // different addresses can be provided via setting OutputBlockIdKey (say '{2,3,4,5})
           // and different RANGES can be given (for later subdecode) using IdKey (say '{ 'h100, 'h200, 'h400, 'h440} ) and
           // IdMask (say '{ 'hff, 'h1ff, 'h3f, 'h3f })
-          mask[i] <= ((OutputBlockIdKey[i] == 32'hffffffff) ? (in.toblock == i) :
-                      ((in.toblock & OutputBlockIdMask[i]) == OutputBlockIdKey[i]));
+          mask[i] <= ((OutputBlockIdKey[i] == { BlockIdBits {1'b1} }) ? (in.toblock == i) :
+                      ((in.toblock & ~OutputBlockIdMask[i]) == OutputBlockIdKey[i]));
         end
       end
     end

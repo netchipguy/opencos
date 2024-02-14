@@ -9,8 +9,11 @@ import time
 import atexit
 import shutil
 
+progname = "UNKNOWN"
+progname_in_message = True
 logfile = None
 loglast = 0
+debug_level = 1
 
 args = {
     'color' : True,
@@ -37,14 +40,14 @@ def start_log(filename, force=False):
 
 def write_log(text, end):
     global logfile, loglast
-    sw = text.startswith("INFO: [EDA]")
+    sw = text.startswith(f"INFO: [{progname}]")
     if (((time.time() - loglast) > 10) and
-        (text.startswith("DEBUG: [EDA]") or
-         text.startswith("INFO: [EDA]") or
-         text.startswith("WARNING: [EDA]") or
-         text.startswith("ERROR: [EDA]"))):
+        (text.startswith(f"DEBUG: [{progname}]") or
+         text.startswith(f"INFO: [{progname}]") or
+         text.startswith(f"WARNING: [{progname}]") or
+         text.startswith(f"ERROR: [{progname}]"))):
         dt = datetime.datetime.now().ctime()
-        print(f"INFO: [EDA] Time: {dt}", file=logfile)
+        print(f"INFO: [{progname}] Time: {dt}", file=logfile)
         loglast = time.time()
     print(text, end=end, file=logfile)
     logfile.flush()
@@ -193,19 +196,30 @@ def print_yellow(text, end='\n'):
     print(f"{string_yellow}{text}{string_normal}" if args['color'] else f"{text}", end=end, flush=True)
     print_post(text, end)
 
-def debug(text, level=1, start="DEBUG: [EDA] ", end='\n'):
-    if args['debug'] and ((level==1) or args['verbose']):
+def set_debug_level(level):
+    debug_level = level
+    args['debug'] = (level > 0)
+    args['verbose'] = (level > 1)
+
+# the <<d>> stuff is because we change progname after this is read in.  if we instead infer progname or
+# get it passed somehow, we can avoid this ugliness / performance impact (lots of calls to debug happen)
+def debug(text, level=1, start='<<d>>', end='\n'):
+    if start=='<<d>>': start = f"DEBUG: " + ("[{progname}] " if progname_in_message else "")
+    if args['debug'] and ((level==1) or args['verbose'] or (debug_level >= level)):
         print_yellow(f"{start}{text}", end=end)
 
-def info(text, start="INFO: [EDA] ", end='\n'):
+def info(text, start='<<d>>', end='\n'):
+    if start=='<<d>>': start = f"INFO: " + ("[{progname}] " if progname_in_message else "")
     if not args['quiet']:
         print_green(f"{start}{text}", end=end)
 
-def warning(text, start="WARNING: [EDA] ", end='\n'):
+def warning(text, start='<<d>>', end='\n'):
+    if start=='<<d>>': start = f"WARNING: " + ("[{progname}] " if progname_in_message else "")
     args['warnings'] += 1
     print_orange(f"{start}{text}", end=end)
 
-def error(text, error_code=-1, do_exit=True, start="ERROR: [EDA] ", end='\n'):
+def error(text, error_code=-1, do_exit=True, start='<<d>>', end='\n'):
+    if start=='<<d>>': start = f"ERROR: " + ("[{progname}] " if progname_in_message else "")
     args['errors'] += 1
     print_red(f"{start}{text}", end=end)
     if do_exit: exit(error_code)

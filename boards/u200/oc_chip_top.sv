@@ -55,6 +55,7 @@ module oc_chip_top
   if (LedCount>2) OBUF uIOBUF_STATUS_LED2_FPGA (.O(STATUS_LED2_FPGA), .I(ledOut[2]) );
 
   // *** UART ****
+  `OC_STATIC_ASSERT(UartCount<=2);
   (* dont_touch = "yes" *)
   logic [UartCountSafe-1:0]     uartRx, uartTx, debugUartTx;
 

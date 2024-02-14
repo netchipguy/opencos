@@ -1,0 +1,909 @@
+#!/usr/bin/python3
+
+# SPDX-License-Identifier: MPL-2.0
+
+import time
+import signal
+import re
+import os
+import sys
+import getopt
+import shutil
+import shlex
+import traceback
+
+import serial # maybe at some point, pull this in, as PySerial is pure python.  Currently need "pip install PySerial"...
+import oc_pylib.util as util # our own library of helpers
+
+util.progname_in_message = False # too noise for this use case
+
+# **************************************************************
+# **** Global vars
+
+global_vars = {}
+
+def apply_global_vars(text):
+    global global_vars
+    for key in global_vars.keys():
+        text = text.replace("$%s" % key, global_vars[key])
+    return text
+
+def eval_true(text):
+    tt = apply_global_vars(text).lower()
+    if tt=="t" or tt=="true" or tt=="1" or tt=="yes" or tt=="on": return True
+    if tt=="f" or tt=="false" or tt=="0" or tt=="no" or tt=="off": return False
+    util.warning(f"Expected a boolean, got '{text}', assuming that means 'False'")
+    return False
+
+def eval_number(text, ishex=False, check_uint_bits=False, check_int_min=False, check_int_max=False):
+    # if we've been given an int already, set the value to that
+    if isinstance(text, int):
+      value = text
+    else:
+      mult = 1
+      # do variable substitution
+      text = apply_global_vars(text)
+      # look for a prefix for human friendly number, note these suffixes work on hex numbers too
+      m = re.match(r'^(.*)[Kk]$', text)
+      if m:
+        mult = 1024
+        text = m.group(1)
+      m = re.match(r'^(.*)[Mm]$', text)
+      if m:
+        mult = 1024*1024
+        text = m.group(1)
+      m = re.match(r'^(.*)[Gg]$', text)
+      if m:
+        mult = 1024*1024*1024
+        text = m.group(1)
+      # substition is done, multiplier is extracted, time to look for a number
+      value = False
+      if not ishex: # if we've been told it's hex, we don't do this match, because hex can look decimal
+        m = re.match(r'^(\d+)$', text)
+        if m: value = int(m.group(1)) * mult
+      if (type(value) != int):
+        m = re.match(r'^0x([\da-fA-F]+)$', text) # if it's starts with 0x, then it's hex
+        if m: value = int(m.group(1), 16) * mult
+      if (type(value) != int):
+        m = re.match(r'^([\da-fA-F]+)$', text) # if it has a-f, then it's hex
+        if m: value = int(m.group(1), 16) * mult
+    # if we don't have value as an int by here, we are out of ideas
+    if (type(value) != int):
+        util.error(f"Expected a number, got '{text}'", do_exit=False)
+        raise HandledError
+    # if we're given a number of uint bits to check, convert to int min/max
+    if (type(check_uint_bits) == int):
+      check_int_min = 0
+      check_int_max = (1 << check_uint_bits)-1
+    # check value is within int min/max
+    if (type(check_int_min) == int):
+        if (value < check_int_min):
+            util.error(f"Expected a number >= {check_int_min}, got {value}", do_exit=False)
+            raise HandledError
+    if (type(check_int_max) == int):
+        if (value > check_int_max):
+            util.error(f"Expected a number <= {check_int_max}, got {value}", do_exit=False)
+            raise HandledError
+    return value
+
+def eval_regex(regex, text):
+    global m
+    text = apply_global_vars(text)
+    m = re.match(regex, text)
+    return m
+
+# **************************************************************
+# **** Readline related
+
+try:
+  import readline
+  got_readline = 1
+except:
+  got_readline = 0
+  pass
+
+
+if got_readline:
+    histfile = os.path.join(os.path.expanduser("~"), ".oc_cli_history")
+    try:
+        readline.read_history_file(histfile)
+        readline.set_history_length(1000)
+    except FileNotFoundError:
+        pass
+
+
+# **************************************************************
+# **** Serial-Over-Tcp
+
+class FakeSerial:
+    def __init__(self, port, timeout) -> None:
+        try:
+            tcpTuple = port.split(":", 1)[1].split(",")
+            self.ip = tcpTuple[0]
+            self.baseport = int(tcpTuple[1])
+            self.devno = int(tcpTuple[2])
+            self.inBuf = bytearray()
+            self.timeout = timeout
+        except:
+            raise AttributeError("Fake serial port must be specified as: tcp:IPAddress,UARTBasePort,UARTDeviceNumber")
+        self.sck = socket.create_connection(("127.0.0.1", self.baseport+self.devno))
+        self.sck.settimeout(0)
+    def read(self, nBytes):
+
+        starttime = time.monotonic()
+
+        while (len(self.inBuf) < nBytes) and ((time.monotonic() - starttime) < self.timeout):
+            try:
+                data = self.sck.recv(4096)
+            except BlockingIOError:
+                data = b''
+            self.inBuf.extend(data)
+
+        requested = self.inBuf[:nBytes]
+        nextdata = self.inBuf[nBytes:]
+        self.inBuf = nextdata
+        return bytes(requested)
+    def write(self, data):
+        ret = self.sck.send(data)
+        return ret
+    def close(self):
+        self.sck.close()
+    @property
+    def in_waiting(self):
+        return len(self.inBuf)
+    @property
+    def out_waiting(self):
+        return 0
+
+
+# **************************************************************
+# **** Blocks
+block_table = {}
+
+
+class Block():
+    def __init__(self, channel, blockid, name):
+        self.channel = channel
+        self.blockid = blockid
+        self.name = name
+
+    def __str__(self):
+        return f"Block {self.name} [{self.blockid}]"
+
+    def info    (self, text): util.info    (f"{self.name}[{self.blockid}]: {text}")
+    def debug   (self, text): util.debug   (f"{self.name}[{self.blockid}]: {text}")
+    def warning (self, text): util.warning (f"{self.name}[{self.blockid}]: {text}")
+    def error   (self, text): util.error   (f"{self.name}[{self.blockid}]: {text}")
+
+    def connect(self):
+        util.debug(f"Connecting {self.name}@{self.blockid}")
+
+    def disconnect(self):
+        util.debug(f"Disconnecting {self.name}@{self.blockid}")
+
+    def csr_read32(self, space, address, msgid=0, verbose=False):
+        util.debug(f"{self}: csr_read32(space={space},address={address:08x})")
+        return self.channel.csr_read32(self.blockid, space, address, msgid, verbose)
+
+    def csr_write32(self, space, address, data, msgid=0, verbose=False):
+        util.debug(f"{self}: csr_write32(space={space},address={address:08x}, data={data:08x})")
+        return self.channel.csr_write32(self.blockid, space, address, data, msgid, verbose)
+
+    def command_show(self, parts=[], help_line=False):
+        if help_line: return "Shows high level status of the block in human readable form";
+        self.warning(f"Command 'show' was called on a block type for which there is no handler")
+
+    def command_dump(self, parts=[], help_line=False):
+        if help_line: return "Dumps detailed config/status info of the block in human readable form";
+        self.warning(f"Command 'dump' was called on a block type for which there is no handler")
+
+    def command_help(self, parts=[], help_line=False):
+        if help_line: return "This help";
+        util.info(f"Help for {self}")
+        for func in sorted([a for a in dir(self) if callable(getattr(self, a))]):
+            m = re.match(r'command_(\w+)', func)
+            if m:
+                cmd = m.group(1)
+                util.info(f"{cmd:20} : {getattr(self,func)(help_line=True)}")
+
+    def dump_reg (self, space, address, name, fields=[], end='\n'):
+        data = self.csr_read32(space, address)
+        util.info("REG [%02x][%01x][%08x] (%-28s) = %08x" % (self.blockid, space, address, name, data), end=end)
+        for field in fields:
+            msb = field[0]
+            lsb = field[1]
+            fieldname = field[2]
+            width = (msb-lsb+1)
+            mask = (1<<width)-1
+            if msb == lsb:
+                util.info("                 [%2d] %-28s   = %8x" % (lsb, fieldname, ((data >> lsb) & 1)))
+            else:
+                digits = int((width+3)/4)
+                fmt = "              [%%2d:%%2d] %%-28s   = %s%%0%dx" % (' '*(8-digits), digits)
+                util.info(fmt % (msb, lsb, fieldname, ((data >> lsb) & mask)), end=end)
+        return data
+
+    def process_tokens(self, parts):
+        command = parts.pop(0)
+        if (f"command_{command}" in dir(self)) and callable(getattr(self,f"command_{command}")):
+            util.debug(f"About to launch into method command_{command}")
+            getattr(self,f"command_{command}")(parts)
+        else:
+            util.warning(f"Didn't understand command: '{command}'")
+
+
+# **** BlockLED
+
+
+class BlockLED(Block):
+    def __init__(self, channel, blockid):
+        Block.__init__(self, channel, blockid, "LED")
+
+    def connect(self):
+        Block.connect(self)
+        data = self.csr_read32(0, 0)
+        self.csrid = ((data >> 16) & 0xffff)
+        self.numled = ((data) & 0xffff)
+        util.debug(f"Connect: {self} CsrId={self.csrid} NumLed={self.numled}")
+
+    def led_status(self, led):
+        data = self.csr_read32(0, 8 + (led*4))
+        blinks = ((data>>16) & 0x07)
+        bright_pct = (100 * ((data >> 8) & 0x3f) / 63)
+        if ((data & 0x3) == 1):   return (f"on ({bright_pct}% bright)")
+        elif ((data & 0x3) == 2): return (f"blink ({blinks} times, {bright_pct}% bright)")
+        elif ((data & 0x3) == 3): return (f"heartbeat ({bright_pct}% bright)")
+        return "off"
+
+    def command_show(self, parts=[], help_line=False):
+        if help_line: return "Shows high level status of the block in human readable form";
+        for i in range(self.numled):
+            util.info(f"LED {i+1:3}/{self.numled:3}: {self.led_status(i):20}")
+
+    def command_dump(self, parts=[], help_line=False):
+        if help_line: return "Dumps detailed config/status info of the block in human readable form";
+        self.info(f"Dumping {self}:")
+        data = self.dump_reg(0, 0x0000, "OcID", [ [31,16,"ID"], [7,0,"LED_COUNT"] ])
+        count = data & 0xff
+        self.dump_reg(0, 0x0004, "Prescale", [ [9,0,"CYCLES"] ])
+        for i in range(count):
+            self.dump_reg(0, 0x0008+i, "LedControl%d" % i, [ [18,16,"BLINKS"], [13,8,"BRIGHT"], [1,0,"MODE"] ])
+
+    def command_set(self, parts=[], help_line=False):
+        if help_line: return "Set the state of the led: [on|off|blink|heartbeat] [brightness=0-63]";
+        led = -1
+        bright = 0x3f
+        blinks = 1
+        command = -1 # report status
+        prescale = -1
+        while (len(parts)):
+            cmd = parts.pop(0)
+            if (eval_regex(r'^(\d+)$', cmd)):
+                led = eval_number(m.group(1))
+            elif (eval_regex(r'^status$', cmd)):
+                command = -1
+            elif (eval_regex(r'^off$', cmd)):
+                command = 0
+            elif (eval_regex(r'^on$', cmd)):
+                command = 1
+            elif (eval_regex(r'^blink$', cmd)):
+                command = 2
+            elif (eval_regex(r'^heartbeat$', cmd)):
+                command = 3
+            elif (eval_regex(r'^prescale=(.+)', cmd)):
+                prescale = eval_number(m.group(1), check_uint_bits=10, check_int_min=5)
+            elif (eval_regex(r'^bright=(.+)', cmd)):
+                bright = eval_number(m.group(1), check_uint_bits=6)
+            elif (eval_regex(r'^blinks=(.+)', cmd)):
+                blinks = eval_number(m.group(1), check_uint_bits=3)
+            else:
+                print("LED ERROR: didn't understand option: %s" % cmd)
+                error = 1
+                return
+        if prescale != -1:
+            self.csr_write32(0, 4, prescale)
+        if command == -1: # we reporting status
+            if led == -1: # on all LEDs
+                for i in range(self.numled): print("LED %3d : %s" % (  i, self.led_status(  i)))
+            else:                            print("LED %3d : %s" % (led, self.led_status(led)))
+        else:
+            if led == -1: # on all LEDs
+                for i in range(self.numled): self.csr_write32(0, 8 + (  i*4), ((blinks<<16) | (bright<<8) | command) )
+            else:                            self.csr_write32(0, 8 + (led*4), ((blinks<<16) | (bright<<8) | command) )
+
+# **** Register all the block classes into a table that can be queried by GUI
+
+block_table[0] = { 'name' : 'Unknown'    , 'csrid' :  0, 'handler' : Block           }
+block_table[6] = { 'name' : 'LED'        , 'csrid' :  6, 'handler' : BlockLED        }
+
+# **************************************************************
+# *** Channels
+# Connect to a particular chip.  They contain standard methods
+# (csr_read, info, timers, scan, etc).
+
+class Channel:
+    global block_table
+    def __init__(self, name):
+        self.name = name
+        self.chip_info_bytes = []
+        self.chip_info_strings = None
+        self.chip_timers = None
+        # need to read this from the RTL file
+        self.block_handler = {} # <block> : <Block class>, so we can have stateful objects managing each block
+        self.csrid_table = {} # <csrid> : block name as a pretty string, so we can print "Block[0] is an LED"
+        self.block_dict = {} # lowercase name : block table entry, for when user types "led dump"
+        for i,b in block_table.items():
+            self.csrid_table[i] = b['name'] # create a table for convenient printing of name
+            self.block_dict[b['name'].lower()] = b # and a dict to lookup block info by lowercase (CLI) name
+
+    def close(self):
+        util.debug(f"Closed {name}")
+        self.name = name+" (closed)"
+        self.chip_info_bytes = []
+        self.chip_info_strings = None
+        self.chip_timers = None
+
+    def lookup_table_string(self, table, i):
+        if isinstance(table, list):
+            if i >= len(table): return "INVALID"
+            return table[i]
+        if isinstance(table, dict):
+            if i not in table: return "INVALID"
+            return table[i]
+        return "INVALID_TABLE"
+
+    def show_chip_info(self):
+        self.chip_info_load()
+        util.info(f"Version          : {self.chip_info_strings['version']:8}")
+        util.info(f"Builder ID       : {self.chip_info_strings['builder_id']:8}")
+        util.info(f"Bitstream ID     : {self.chip_info_strings['bitstream_id']:8}")
+        util.info(f"Build Date       : {self.chip_info_strings['build_date']:8}")
+        util.info(f"Build Time       : {self.chip_info_strings['build_time']:8}")
+        util.info(f"Board Vendor     : {self.chip_info_strings['board_vendor']:8}")
+        util.info(f"Board Name       : {self.chip_info_strings['board_name']:8}")
+        util.info(f"Board Library    : {self.chip_info_strings['board_library']:8}")
+        util.info(f"Blocks Top       : {self.chip_info_strings['blocks_top']:8}")
+        util.info(f"Blocks User      : {self.chip_info_strings['blocks_user']:8}")
+        util.info(f"Block Protocol   : {self.chip_info_strings['block_protocol']:8}")
+        util.info(f"Userspace        : {self.chip_info_strings['userspace']}")
+        util.info(f"UUID             : {self.chip_info_strings['uuid']}")
+
+    def show_chip_timers(self):
+        self.chip_timer_load()
+        util.info(f"Time since reload/power : {self.chip_timers['seconds_since_reload']:10} seconds")
+        util.info(f"Time since reset        : {self.chip_timers['seconds_since_reset']:10} seconds")
+        util.info(f"Cycles since reset      : {self.chip_timers['cycles_since_reset']:10} cycles")
+        util.info(f"Cycles under reset      : {self.chip_timers['cycles_under_reset']:10} cycles")
+
+    def create_block_handler(self, block, handler):
+        if block in self.block_handler:
+            util.warning(f"Creating a block handler for block {block} but one exists, removing it")
+            self.block_handler[block].disconnect()
+        self.block_handler[block] = handler(self, block)
+        self.block_handler[block].connect()
+
+    def scan_chip(self, create_handlers=True, force_new_handlers=False):
+        self.chip_info_load()
+        for b in range(0, int(self.chip_info_strings['blocks_top'])):
+            temp32 = self.csr_read32(b, 0, 0)
+            csrid = ((temp32 >> 16) & 0xffff)
+            params = (temp32 & 0xffff)
+            name = self.lookup_table_string(self.csrid_table, csrid)
+            util.info(f"Block {name:12} [{b:04x}] CsrId={csrid:04x} Params={params:04x}")
+            if create_handlers and (force_new_handlers or not b in self.block_handler):
+                handler = self.block_dict[name.lower()]['handler']
+                self.create_block_handler(b, handler)
+
+# SerialChannel is a subclass of channel that knows how to talk to the chip over serial methods (TCP Socket, or PySerial)
+class SerialChannel(Channel):
+    def __init__(self, port, baud):
+        Channel.__init__(self, port)
+        # def serial_open(port, baud):
+        self.port = port
+        self.baud = baud
+        if port.startswith("tcp:"):
+            util.debug(f"Opening FakeSerial {port}...")
+            self.ser = FakeSerial(port, timeout=0.5)
+            util.info(f"Opened FakeSerial {port}")
+        else:
+            util.debug(f"Opening {port} @ {baud}bps...")
+            self.ser = serial.Serial(port=port, baudrate=baud, timeout=0.5)
+            util.info(f"Opened {port} @ {baud}bps")
+
+    def close(self):
+        self.ser.close()
+        Channel.close()
+
+    def flush(self):
+        util.debug(f"Channel: Flushing serial...")
+        s = "."
+        flushed = ""
+        while len(s):
+            s = self.ser.read(100)
+            flushed += s.decode(encoding='UTF-8')
+        util.debug(f"Channel: Flush done, got {flushed} ({len(flushed)} bytes)", level=2)
+
+    def reset(self):
+        util.debug(f"Channel: Reset, sending 64 '~' chars")
+        for i in range(64):
+            self.serial_write(b'~')
+        time.sleep(0.1)
+        s = self.serial_read(32) # read anything else that comes in after reset, like prompt, syntax error because partial byte
+        util.info(f"Channel: Reset complete")
+
+    def serial_write(self, tx_bytes, expect_echo=False, expect_prompt=False, pace_with_echo=False, pace_with_cpu=False):
+        util.debug(f"Channel: writing {tx_bytes} ({len(tx_bytes)} bytes)%s%s" %
+                   (" (echo)" if expect_echo else "",
+                    " (prompt)" if expect_prompt else ""))
+
+        start = time.time()
+        self.ser.write(tx_bytes)
+        written = time.time()
+        echo = written
+        if expect_echo:
+            echo = time.time()
+            rx_bytes = self.ser.read(len(tx_bytes))
+            if rx_bytes != tx_bytes:
+                util.warning(f"Channel: sent {tx_bytes} ({len(tx_bytes)}), expected echo, got: {rx_bytes} ({len(rx_bytes)} bytes)")
+        if expect_prompt:
+            self.serial_read_prompt()
+            #rx_bytes = self.ser.read(5)
+            #if rx_bytes != b'\r\nOC>':
+            #    util.warning(f"Channel: expected prompt, got: {rx_bytes} ({len(rx_bytes)} bytes)")
+        done = time.time()
+        # print("DEBUG: %.6fs to write, %.6fs for echo, %.6fs total" % (written-start, echo-start, done-start))
+
+    def serial_read(self, length=1):
+        util.debug(f"Channel: Reading {length} bytes...")
+        start = time.time()
+        rx_bytes = self.ser.read(length)
+        doneread = time.time()
+        util.debug(f"Channel: Read {rx_bytes} ({len(rx_bytes)} bytes)")
+        done = time.time()
+        # print("DEBUG: %.6fs to read, %.6fs total" % (doneread-start, done-start))
+        return rx_bytes
+
+    def serial_read_prompt(self):
+        util.debug(f"Channel: Expecting prompt...")
+        s = self.serial_read(5)
+        if s != b'\r\nOC>':
+            util.error(f"Channel: Ping didn't receive expected prompt, got: {s} ({len(s)} bytes)", do_exit=False)
+            raise HandledError
+
+    def serial_read_error(self):
+        util.debug(f"Channel: Expecting error...")
+        s = self.serial_read(12)
+        if s != b'\r\nERROR\r\nOC>':
+            util.error(f"Channel: Ping didn't receive expected error, got: {s} ({len(s)} bytes)", do_exit=False)
+            raise HandledError
+
+    def ping(self):
+        util.debug(f"Channel: Ping, first flushing anything in channel")
+        self.flush()
+        util.debug(f"Channel: Pinging serial, sending \\n for prompt")
+        self.serial_write(b'\n')
+        self.serial_read_prompt()
+        util.debug(f"Channel: Pinging serial, sending ^ for error")
+        self.serial_write(b'^\n')
+        self.serial_read_error()
+        util.info(f"Channel: Ping OK")
+
+    def serial_read_int32(self):
+        util.debug(f"Channel: Readinf int32...")
+        b = self.serial_read(4)
+        i32 = ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | (b[3]))
+        util.debug(f"Channel: Read int32: {i32}")
+        return i32
+
+    def chip_info_load(self):
+        if self.chip_info_strings: return
+        util.info(f"Loading chip info")
+        self.serial_write(b'I\n')
+        b = self.serial_read(64)
+        self.chip_info_bytes = b
+        self.chip_info_strings = {
+            'version'        : ("%02x" % (b[0])),
+            'builder_id'     : ("%06x" % ((b[1] << 16) | (b[2] << 8) | (b[3]))),
+            'bitstream_id'   : ("%08x" % ((b[4] << 24) | (b[5] << 16) | (b[6] << 8) | (b[7]))),
+            'build_date'     : ("%04x/%02x/%02x" % ((b[8] << 8) | (b[9]), (b[10]), (b[11]) )),
+            'build_time'     : ("%02x:%02x" % ((b[12]), (b[13]))),
+            'board_vendor'   : self.lookup_table_string(['Unknown', 'Xilinx'],
+                                                        ((b[14] << 8) | (b[15]))),
+            'board_name'     : self.lookup_table_string(['Unknown', 'VCU1525', 'AU200', 'AU50', 'AU55N', 'AU50C', 'JC35'],
+                                                        ((b[16] << 8) | (b[17]))),
+            'board_library'  : self.lookup_table_string(['Unknown', 'Ultrascale+'],
+                                                        ((b[18] << 8) | (b[19]))),
+            'blocks_top'     : ("%04x" % ((b[20] << 8) | (b[21]))),
+            'blocks_user'    : ("%04x" % ((b[22] << 8) | (b[23]))),
+            'block_protocol' : ("%02x" % (b[24])),
+            'userspace'      : "",
+            'uuid'           : "",
+        }
+        for i in range (0, 16): self.chip_info_strings['userspace'] += chr(b[32+i])
+        for i in range (0, 16): self.chip_info_strings['uuid']      += ("%02x" % (b[48+i]))
+        self.serial_write(b'', expect_prompt=True)
+
+    def chip_timer_load(self):
+        util.info(f"Loading chip timers")
+        self.serial_write(b'T\n')
+        self.chip_timers = {
+            'seconds_since_reload' : self.serial_read_int32(),
+            'seconds_since_reset'  : self.serial_read_int32(),
+            'cycles_since_reset'   : self.serial_read_int32(),
+            'cycles_under_reset'   : self.serial_read_int32(),
+        }
+        self.serial_write(b'', expect_prompt=True)
+
+    def bc_send(self, message, end=b'\n'):
+        if len(message)<2 or len(message)>100:
+            util.error(f"Cannot send BC messages >100B in length, this was: {message} ({len(message)} bytes)", do_exit=False)
+            raise HandledError
+        self.serial_write(b'B'+ (len(message)+1).to_bytes(1) + message + end)
+
+    def bc_receive(self):
+        b = self.serial_read(1)
+        length = int(b[0])
+        message = self.serial_read(length-1)
+        return message
+
+    def bc_send_receive(self, message, end=b'\n'):
+        self.bc_send(message,end=b'') # send message, no \n to leave response channel open
+        response = self.bc_receive()  # collect message response, channel will have some timeout
+        self.serial_write(end)        # close the BC channel
+        return response
+
+    def csr_read32(self, block, space, address, msgid=0, verbose=False):
+        util.debug(f"Channel: csr_read32(block={block},space={space},address={address:08x})")
+        request = (block.to_bytes(2, 'big') +
+                   b'\x01' + # read command
+                   ((space<<4)+msgid).to_bytes(1) +
+                   address.to_bytes(4, 'big') +
+                   int(0).to_bytes(4, 'big'))
+        response = self.bc_send_receive(request)
+        self.serial_read_prompt()
+        if len(response) != 5:
+            util.error(f"Expected 5-byte response to CSR BC mesasge, got {response} ({len(response)} bytes)", do_exit=False)
+            raise HandledError
+        if response[0] != 1:
+            util.error(f"Expected ready=1 status byte (0x01), got {response[0]:02x})", do_exit=False)
+            raise HandledError
+        data = int.from_bytes(response[1:5], 'big')
+        if verbose or (util.args['debug']>3):
+            print(f"  {data:08x} <- [{block:04x}][{space:01x}][{address:08x}]")
+        return data
+
+    def csr_write32(self, block, space, address, data, msgid=0, verbose=False):
+        util.debug(f"Channel: csr_write32(block={block},space={space},address={address:08x}, data={data:08x})")
+        request = (block.to_bytes(2, 'big') +
+                   b'\x02' + # write command
+                   ((space<<4)+msgid).to_bytes(1) +
+                   address.to_bytes(4, 'big') +
+                   data.to_bytes(4, 'big'))
+        response = self.bc_send_receive(request)
+        self.serial_read_prompt()
+        if len(response) != 5:
+            util.error(f"Expected 5-byte response to CSR BC mesasge, got {response} ({len(response)} bytes)", do_exit=False)
+            raise HandledError
+        if response[0] != 1:
+            util.error(f"Expected ready=1 status byte (0x01), got {response[0]:02x})", do_exit=False)
+            raise HandledError
+        if verbose or (util.args['debug']>3):
+            print(f"  {data:08x} -> [{block:04x}][{space:01x}][{address:08x}]")
+
+# **************************************************************
+# **** Commands
+
+class Command:
+    def __init__(self, channel):
+        self.channel = channel
+
+class CommandInfo(Command):
+    def __init__(self, channel):
+        Command.__init__(self, channel)
+    def process_tokens(ch, parts):
+        pass
+
+
+# **************************************************************
+# **** Token processing
+
+current_block = 0
+current_space = 0
+
+def parse_block_space(parts):
+    global current_block
+    global current_space
+    if (len(parts)): # we have been given channel + space
+        if (len(parts)<2):
+            return 2 # return 2 when we can't proceeed, caller prints an appropriate error
+        block = eval_number(parts.pop(0))
+        space = eval_number(parts.pop(0))
+        if ((block < 0) or (block > 0xfff0)):
+            util.error(f"Block: {block:04x} is not a valid 16-bit block", do_exit=False)
+            raise HandledError
+        elif ((space < 0) or (space > 0xf)):
+            util.error(f"Space: {space:01x} is not a valid 4-bit space", do_exit=False)
+            raise HandledError
+        else:
+            current_block = block
+            current_space = space
+    return 0
+
+def process_tokens(ch, parts):
+    global interactive_channel
+    global interactive_space
+    global mode_binary
+    global global_vars
+    global source_stack
+    command = parts.pop(0)
+    try:
+        if command == 'quit' or command == 'q':
+            readline.write_history_file(histfile)
+            sys.exit(0)
+        elif command == 'history' or command == 'h' or command == 'hi' or command == 'hist':
+            if (len(parts) < 1):  num_to_show = 10
+            else:                 num_to_show = eval_number(parts.pop(0))
+            total_items = readline.get_current_history_length()
+            num_to_show = min(total_items, num_to_show)
+            for i in range(num_to_show):
+                print(f"{total_items-num_to_show+i+1:4} {readline.get_history_item(total_items-num_to_show+i+1)}")
+        elif eval_regex(r'\!\s*(\d*)',command) :
+            total_items = readline.get_current_history_length()
+            if m.group(1):        num = int(m.group(1))
+            elif len(parts) < 1:  num = total_items
+            else:                 num = eval_number(parts.pop(0))
+            if num < 1:
+                util.error(f"Cannot access history line <1", do_exit=False)
+                raise HandledError
+            if num > total_items:
+                util.error(f"Cannot access history line >{total_items}", do_exit=False)
+                raise HandledError
+            line = readline.get_history_item(num)
+            print(f"OC_TTY->{line}")
+            readline.replace_history_item(total_items-1, line)
+            source_stack.append([line])
+        elif command == 'ping' or command == 'p':
+            ch.ping()
+        elif command == 'flush':
+            ch.flush()
+        elif command == 'reset':
+            ch.reset()
+        elif command == 'debug':
+            if (len(parts) < 1):
+                util.info("Debug level is currently %d, change with 'debug <level>'" % (debug))
+                return
+            util.set_debug_level( eval_number(parts.pop(0)) )
+        elif command == 'set':
+            if (len(parts) < 1):
+                for key,value in sorted(global_vars.items()):
+                    util.info(f"{key}={value}")
+                return
+            key = parts.pop(0)
+            if (len(parts)): # set
+                global_vars[key] = parts.pop(0)
+            else: # get
+                if key in global_vars:
+                    util.info(f"SET: ${key} = {global_vars[key]}")
+                else:
+                    util.warning(f"SET: var '${key}' does not exist")
+        elif command == 'info':
+            ch.show_chip_info()
+        elif command == 'scan':
+            ch.scan_chip()
+        elif command == 'timers':
+            ch.show_chip_timers()
+        elif command == 'read' or command == 'rd' or command == 'r':
+            if (len(parts) < 1):
+                util.info(f"Syntax: read|rd|r <address> [<block> <space> [<length> [<jump>]]]")
+                util.error(f"Need at least an address to read", do_exit=False)
+                raise HandledError
+            address = eval_number(parts.pop(0), ishex=True)
+            if parse_block_space(parts):
+                if parse_block_space(parts) == 2:
+                    util.info(f"Syntax: read|rd|r <address> [<block> <space> [<length> [<jump>]]]")
+                    util.error(f"Need a block and space after address", do_exit=False)
+                    raise HandledError
+            if ((address < 0) or (address > 0xffffffff)):
+                util.error(f"Address {address:08x} is not a 32-bit value", do_exit=False)
+                raise HandledError
+            elif len(parts):
+                length = eval_number(parts.pop(0), ishex=True)
+                jump = 4
+                if (len(parts)):
+                    jump = eval_number(parts.pop(0), ishex=True)
+                on_this_line = 0
+                for offset in range(0, length, jump):
+                    if (on_this_line == 0):
+                        print("%08x : " % (address+offset), end='')
+                    data = ch.csr_read32(current_block, current_space, address + offset)
+                    print("%08x " % data, end='')
+                    on_this_line += 1
+                    if on_this_line == 8:
+                        print("")
+                        on_this_line = 0
+                    if (on_this_line):
+                        print("")
+            else:
+                ch.csr_read32(current_block, current_space, address, verbose=True)
+        elif command == 'write' or command == 'wr' or command == 'w':
+            if (len(parts) < 2):
+                util.info(f"Syntax: write|wr|w <address> <data> [<block> <space> [<length> [<jump>]]]")
+                util.error(f"Need at least an address and data to write", do_exit=False)
+                raise HandledError
+            address = eval_number(parts.pop(0), ishex=True)
+            data = eval_number(parts.pop(0), ishex=True)
+            if parse_block_space(parts):
+                if parse_block_space(parts) == 2:
+                    util.info(f"Syntax: write|wr|w <address> <data> [<block> <space> [<length> [<jump>]]]")
+                    util.error(f"Need a channel and space after address", do_exit=False)
+                    raise HandledError
+            if ((address < 0) or (address > 0xffffffff)):
+                util.error(f"Address {address:08x} is not a 32-bit value", do_exit=False)
+                raise HandledError
+            elif ((data < 0) or (data > 0xffffffff)):
+                util.error(f"Data {data:08x} is not a 32-bit value", do_exit=False)
+                raise HandledError
+            else:
+                ch.csr_write32(current_block, current_space, address, data, verbose=True)
+        elif (command in ch.block_dict): # for commands that open blocks in the channel
+            if len(parts) < 2:
+                util.info(f"Syntax: {command} <block> <command:'dump','help'> [<command-specific args>]")
+                util.error(f"Need at least a block ID and a command", do_exit=False)
+                raise HandledError
+            block = eval_number(parts.pop(0))
+            if block not in ch.block_handler:
+                util.info(f"Syntax: {command} <block> <command:'dump','help'> [<command-specific args>]")
+                util.error(f"Please do 'scan' first before trying to use block handlers", do_exit=False)
+                raise HandledError
+            handler = ch.block_handler[block]
+            handler.process_tokens(parts)
+        elif ("command_%s" % command) in globals(): # for commands pulled in via source
+            globals()[f"command_{command}"](ch, parts)
+        else:
+            util.warning(f"Didn't understand command: '{command}'")
+    except HandledError:
+        return
+    except Exception as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      print(traceback.format_exc())
+      util.error(f"Unexpected exception ({exc_tb.tb_frame.f_code.co_filename}:{exc_tb.tb_lineno}): {str(e)}")
+      return
+
+
+# **************************************************************
+# **** Interactive
+
+source_stack = []
+
+def interactive_get_line(ser):
+  global source_stack
+  if (len(source_stack) > 0):
+    # we are sourcing commands from a file, if there's more than one we finish the latest (last) one
+    source_lines = source_stack[len(source_stack)-1]
+    line = source_lines.pop(0)
+    full_line = ""
+    m = re.match(r'^(.*)\\$', line)
+    while (m):
+      full_line += m.group(1)
+      line = source_lines.pop(0)
+      m = re.match(r'^(.*)\\$', line)
+    full_line += line
+    if (len(source_lines) == 0):
+      source_stack.pop(-1) # we are done with all lines from the latest list, pop the list off the stack
+    return full_line
+  else:
+    # we have no lines from source commands
+    line = input('OC_TTY->')
+    full_line = ""
+    m = re.match(r'^(.*)\\$', line)
+    while (m):
+      full_line += m.group(1)
+      line = input('        ')
+      m = re.match(r'^(.*)\\$', line)
+    full_line += line
+    return full_line
+
+def interactive(ch):
+    global debug
+    global m
+    ch.flush()
+    while 1:
+        line = interactive_get_line(ch)
+        m = re.match(r'^(.*)\#.*$', line)
+        if m: line = m.group(1)
+        parts = shlex.split(line)
+        if len(parts) == 0: continue
+        process_tokens(ch, parts)
+
+
+# **************************************************************
+# **** Interrupt Handler
+
+def signal_handler(sig, frame):
+    util.fancy_stop()
+    util.info('Received Ctrl+C...', start='\nINFO: [OC_CLI] ')
+    util.exit(1)
+
+class HandledError(Exception):
+    pass
+
+# **************************************************************
+# **** Startup Code
+
+debug_respawn = False
+util.progname = "OC_CLI"
+
+def main():
+    util.info("*** OpenCOS CLI ***")
+    try:
+        opts,args = getopt.getopt(sys.argv[1:], "hs:b:",
+                                  ["help", "serial=", "baud=",
+                                   "color", "no-color",
+                                   "quiet", "no-quiet",
+                                   "verbose", "no-verbose",
+                                   "debug", "no-debug",
+                                   "fancy", "no-fancy",
+                                   "logfile=", "force-logfile=",
+                                   ])
+    except getopt.GetoptError as err:
+        print(str(err))
+        usage()
+        sys.exit(-2)
+
+    baud = 460800
+    port = "COM1" if os.name == 'nt' else "/dev/ttyUSB2"
+    for opt,arg in opts:
+        if opt in ['-h', '--help']:
+            usage()
+            sys.exit(0)
+        if opt in ['-s', '--serial']:
+            port = arg
+        if opt in ['-b', '--baud']:
+            baud = arg
+        if util.process_token(opt):
+            if arg: util.proces_token(arg)
+
+    try:
+        ch = SerialChannel(port, baud)
+    except Exception as e:
+        if util.args['debug']: print(traceback.format_exc())
+        else: print(str(e))
+        usage()
+        sys.exit(-3)
+
+    interactive(ch)
+    ch.close()
+
+def usage():
+    print("")
+    print("Usage: oc_cli [-h|--help] [-s|--serial <port>] [-b|--baud <rate>]")
+    print("--help                This screen")
+    print("--serial <port>       Select serial port. Defaults to COM1 on Windows, else /dev/ttyUSB2 (Xilinx default)")
+    print("--baud                Select baud rate. Defaults to 460800")
+    print("")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    # First we check if we are respawning
+    this_path = os.path.realpath(__file__)
+    if debug_respawn: util.debug(f"RESPAWN: this_path : '{this_path}'")
+    oc_root = util.get_oc_root()
+    if debug_respawn: util.debug(f"RESPAWN: oc_root   : '{oc_root}'")
+    cwd = util.getcwd()
+    if debug_respawn: util.debug(f"RESPAWN: cwd       : '{cwd}'")
+    if oc_root and (not '-respawn' in sys.argv):
+        new_path = os.path.join(oc_root, "bin", "oc_cli")
+        if (this_path != new_path):
+            # we are not the correct version of EDA for this Git repo, we should respawn
+            util.info('%s respawning %s in %s' % (this_path, new_path, cwd))
+            sys.argv[0] = new_path
+            proc = subprocess.Popen(sys.argv, shell=0, cwd=cwd, universal_newlines=True)
+            while True:
+                try:
+                    proc.communicate()
+                    break
+                except KeyboardInterrupt:
+                    continue
+            util.exit()
+    signal.signal(signal.SIGINT, signal_handler)
+    main()

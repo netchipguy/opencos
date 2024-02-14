@@ -7,10 +7,10 @@
 
 module oc_cos
   #(
-    // **************************************************************
-    // ***                EXTERNAL CONFIGURATION                  ***
+    // *******************************************************************************
+    // ***                         EXTERNAL CONFIGURATION                          ***
     // Interfaces to the chip top
-    // **************************************************************
+    // *******************************************************************************
 
     // *** MISC ***
     parameter integer Seed = 0,
@@ -18,7 +18,7 @@ module oc_cos
 
     // *** REFCLOCK ***
     parameter integer RefClockCount = 1,
-    `OC_LOCALPARAM_SAFE(RefClockCount),
+                      `OC_LOCALPARAM_SAFE(RefClockCount),
     parameter integer RefClockHz [0:RefClockCount-1] = {100_000_000},
 
     // *** TOP CLOCK ***
@@ -26,22 +26,24 @@ module oc_cos
 
     // *** LED ***
     parameter integer LedCount = 3,
-    `OC_LOCALPARAM_SAFE(LedCount),
+                      `OC_LOCALPARAM_SAFE(LedCount),
 
     // *** UART ***
     parameter integer UartCount = 2,
-    `OC_LOCALPARAM_SAFE(UartCount),
+                      `OC_LOCALPARAM_SAFE(UartCount),
     parameter integer UartBaud [0:UartCountSafe-1] = {115200, 115200},
     parameter integer UartControl = 0,
-    // **************************************************************
-    // ***                INTERNAL CONFIGURATION                  ***
-    // Configuring OC_COS internals which board can override in
-    // target-specific ways
-    // **************************************************************
+
+    // *******************************************************************************
+    // ***                         INTERNAL CONFIGURATION                          ***
+    // Configuring OC_COS internals which board can override in target-specific ways
+    // *******************************************************************************
 
     // *** Format of Top-Level CSR bus ***
     parameter         type CsrTopType = oclib_pkg::bc_8b_bidi_s,
-    parameter         type CsrTopFbType = oclib_pkg::bc_8b_bidi_s
+    parameter         type CsrTopFbType = oclib_pkg::bc_8b_bidi_s,
+    parameter         type CsrTopProtocol = oclib_pkg::csr_32_tree_s,
+    parameter         type CsrTopFbProtocol = oclib_pkg::csr_32_tree_fb_s
     )
   (
    // *** REFCLOCK ***
@@ -56,26 +58,34 @@ module oc_cos
    );
 
   // *******************************************************************************
+  // *** RESOURCE CALCULATIONS ***
+
+  localparam integer             BlockFirstLed = 0;
+  localparam integer             BlockTopCount = (BlockFirstLed + (LedCount ? 1 : 0)); // we drive all LEDs from one IP
+  localparam integer             BlockUserCount = 0;
+  localparam integer             BlockCount = (BlockTopCount + BlockUserCount);
+
+  // *******************************************************************************
   // *** REFCLOCK ***
-  localparam integer ClockTopHz = RefClockHz[ClockTop]; // should be ~100MHz, some IP cannot go faster
-  logic                             clockTop;
+  localparam integer             ClockTopHz = RefClockHz[ClockTop]; // should be ~100MHz, some IP cannot go faster
+  logic                          clockTop;
   assign clockTop = clockRef[ClockTop];
 
   // *******************************************************************************
   // *** RESET AND TIMING ***
-  logic                             resetFromUartControl;
-  logic                             resetTop;
+  logic                          resetFromUartControl;
+  logic                          resetTop;
 
   // If we have UART based control, we stretch reset to be pretty long, so that if we send a reset command
   // over the UART, or we power up, etc, we hold reset for at least one UART bit time (to allow bus to idle)
-  localparam                        TopResetCycles = (EnableUartControl ?
-                                                      ((ClockTopHz / UartBaud[UartControl]) + 50) :
-                                                      128);
+  localparam                     TopResetCycles = (EnableUartControl ?
+                                                   ((ClockTopHz / UartBaud[UartControl]) + 50) :
+                                                   128);
 
   oclib_reset #(.StartPipeCycles(8), .ResetCycles(TopResetCycles))
   uRESET (.clock(clockTop), .in(hardReset || resetFromUartControl), .out(resetTop));
 
-  oclib_pkg::chip_status_s          chipStatus;
+  oclib_pkg::chip_status_s       chipStatus;
 
   oc_chip_status #(.ClockHz(ClockTopHz))
   uSTATUS (.clock(clockTop), .reset(resetTop), .chipStatus(chipStatus));
@@ -83,13 +93,18 @@ module oc_cos
   // *******************************************************************************
   // *** UART CONTROL ***
 
-  localparam                        type UartBcType = oclib_pkg::bc_8b_bidi_s;
-  UartBcType uartBcOut, uartBcIn;
+  // this is between uart
+  localparam                     type UartControlBcType = oclib_pkg::bc_8b_bidi_s;
+  UartControlBcType              uartBcOut, uartBcIn;
 
-  if (EnableUartControl) begin
+  if (EnableUartControl) begin : uart_control
     oc_uart_control #(.ClockHz(ClockTopHz),
                       .Baud(UartBaud[UartControl]),
-                      .BcType(UartBcType))
+                      .UartControlBcType(UartControlBcType),
+                      .UartControlProtocol(CsrTopProtocol),
+                      .BlockTopCount(BlockTopCount),
+                      .BlockUserCount(BlockUserCount),
+                      .ResetSync(oclib_pkg::False) )
     uCONTROL (.clock(clockTop), .reset(resetTop),
               .resetOut(resetFromUartControl),
               .uartRx(uartRx[UartControl]), .uartTx(uartTx[UartControl]),
@@ -103,15 +118,13 @@ module oc_cos
   // *******************************************************************************
   // *** TOP_CSR_SPLIT ***
 
-  localparam integer NumCsrTop = 1; // just oc_led for now
+  CsrTopType                     csrTop [BlockCount];
+  CsrTopFbType                   csrTopFb [BlockCount];
+  logic                          resetFromTopCsrSplitter;
 
-  CsrTopType csrTop [NumCsrTop];
-  CsrTopFbType csrTopFb [NumCsrTop];
-  logic              resetFromTopCsrSplitter;
-
-  oclib_csr_tree_splitter #(.CsrInType(UartBcType), .CsrInFbType(UartBcType),
+  oclib_csr_tree_splitter #(.CsrInType(UartControlBcType), .CsrInFbType(UartControlBcType),
                             .CsrOutType(CsrTopType), .CsrOutFbType(CsrTopFbType),
-                            .Outputs(NumCsrTop) )
+                            .Outputs(BlockCount) )
   uTOP_CSR_SPLITTER (.clock(clockTop), .reset(resetTop),
                      .resetRequest(resetFromTopCsrSplitter),
                      .in(uartBcOut), .inFb(uartBcIn),
@@ -120,12 +133,16 @@ module oc_cos
   // *******************************************************************************
   // *** LED ***
 
-  oc_led #(.ClockHz(ClockTopHz), .LedCount(LedCount),
-           .CsrType(CsrTopType), .CsrFbType(CsrTopFbType))
-  uLED (.clock(clockTop), .reset(resetTop),
-        .ledOut(ledOut),
-        .csr(csrTop[0]), .csrFb(csrTopFb[0]));
-
+  if (LedCount) begin : led
+    oc_led #(.ClockHz(ClockTopHz), .LedCount(LedCount),
+             .CsrType(CsrTopType), .CsrFbType(CsrTopFbType))
+    uLED (.clock(clockTop), .reset(resetTop),
+          .csr(csrTop[BlockFirstLed]), .csrFb(csrTopFb[BlockFirstLed]),
+          .ledOut(ledOut));
+  end
+  else begin
+    assign ledOut = '0;
+  end
 
   // *******************************************************************************
   // *** idle unused UARTs for now ***

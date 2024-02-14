@@ -7,7 +7,7 @@
 module oc_led #(
                 parameter integer ClockHz = 100_000_000,
                 parameter integer LedCount = 1,
-                `OC_LOCALPARAM_SAFE(LedCount),
+                                  `OC_LOCALPARAM_SAFE(LedCount),
                 parameter         type CsrType = oclib_pkg::csr_32_s,
                 parameter         type CsrFbType = oclib_pkg::csr_32_fb_s,
                 parameter integer SyncCycles = 3,
@@ -17,9 +17,9 @@ module oc_led #(
  (
   input                           clock,
   input                           reset,
-  output logic [LedCountSafe-1:0] ledOut,
   input                           CsrType csr,
-  output                          CsrFbType csrFb
+  output                          CsrFbType csrFb,
+  output logic [LedCountSafe-1:0] ledOut
   );
 
   logic                           resetSync;
@@ -33,18 +33,19 @@ module oc_led #(
   //   [9:0] count (period will be count*2097152, so for ~1Hz we have 47 at 100MHz)
   // 2->(LedCount+1) : Control
   //   [1:0]  mode (0 = off, 1 = on, 2 = blink, 3 = heartbeat)
-  //   [13:8] param (mode=1,3: brightness, mode=2: blink count)
+  //   [13:8] brightness (0-63)
+  //   [18:16] blinks (0-7, valid in mode 2)
 
   localparam integer NumCsr = 2 + LedCount;
   localparam logic [31:0] CsrId = { oclib_pkg::CsrIdLed,
                                     8'd0, 8'(LedCount)};
   localparam logic [31:0] InitPrescale = (ClockHz / 2097152);
-  logic [NumCsr-1:0] [31:0] csrConfig;
-  logic [NumCsr-1:0] [31:0] csrStatus;
+  logic [0:NumCsr-1] [31:0] csrConfig;
+  logic [0:NumCsr-1] [31:0] csrStatus;
 
   oclib_csr_array #(.CsrType(CsrType), .CsrFbType(CsrFbType),
                     .NumCsr(NumCsr),
-                    .CsrRwBits   ({ 32'h00000000, 32'h000003ff, {LedCount{32'h00003f03}} }),
+                    .CsrRwBits   ({ 32'h00000000, 32'h000003ff, {LedCount{32'h00073f03}} }),
                     .CsrRoBits   ({ 32'h00000000, 32'h00000000, {LedCount{32'h00000000}} }),
                     .CsrInitBits ({        CsrId, InitPrescale, {LedCount{32'h00000000}} }),
                     .CsrFixedBits({ 32'hffffffff, 32'h00000000, {LedCount{32'h00000000}} }))
@@ -91,7 +92,7 @@ module oc_led #(
   // Step counter
   // this counts from 0-7 every ~1s, which is our overall period
 
-  logic [2:0]               stepCounter;
+  logic [4:0]               stepCounter;
   always_ff @(posedge clock) begin
     stepCounter <= (resetSync ? '0 : (stepCounter + intraPulse));
   end
@@ -113,16 +114,19 @@ module oc_led #(
   for (genvar i=0; i<LedCount; i++) begin
 
     logic [1:0] ledMode;
-    logic [5:0] ledParam;
+    logic [5:0] ledBright;
+    logic [2:0] ledBlinks;
 
     assign ledMode = csrConfig[2+i][1:0];
-    assign ledParam = csrConfig[2+i][13:8];
+    assign ledBright = csrConfig[2+i][13:8];
+    assign ledBlinks = csrConfig[2+i][18:16];
 
     always_ff @(posedge clock) begin
-      ledOut[i] <= ((ledMode == 2'b01) ? (ledParam >= tdmValue) :                              // on
-                    (ledMode == 2'b10) ? ((ledParam > stepCounter) && intraCounter[7]) :       // blink
-                    (ledMode == 2'b11) ? ((ledParam[5:4] >= intraCounter[1:0]) && heartbeat) : // heartbeat
-                    1'b0);                                                                     // off
+      ledOut[i] <= ((ledMode == 2'b01) ? (ledBright >= tdmValue) :                              // on
+                    (ledMode == 2'b10) ? ((ledBlinks > stepCounter[4:2]) &&                     // blink
+                                          (ledBright >= tdmValue) && stepCounter[1]) :
+                    (ledMode == 2'b11) ? ((ledBright[5:4] >= intraCounter[1:0]) && heartbeat) : // heartbeat
+                    1'b0);                                                                      // off
     end
 
   end

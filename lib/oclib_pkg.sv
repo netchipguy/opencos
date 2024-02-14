@@ -127,95 +127,101 @@ package oclib_pkg;
   // CSR protocols
   // ***********************************************************************************************
 
-  localparam [15:0] CsrIdPll = 'd1;
-  localparam [15:0] CsrIdChipmon = 'd2;
-  localparam [15:0] CsrIdProtect = 'd3;
-  localparam [15:0] CsrIdHbm = 'd4;
-  localparam [15:0] CsrIdIic = 'd5;
-  localparam [15:0] CsrIdLed = 'd6;
-  localparam [15:0] CsrIdGpio = 'd7;
-  localparam [15:0] CsrIdFan = 'd8;
-  localparam [15:0] CsrIdCmac = 'd9;
-  localparam [15:0] CsrIdPcie = 'd10;
+  localparam integer              CsrIdBits = 16;
 
-  localparam [31:0] BcBlockIdAny = 32'hffff_ffff;
-  localparam [31:0] BcBlockIdUser = 32'h8000_0000;
+  localparam [CsrIdBits-1:0]      CsrIdPll = 'd1;
+  localparam [CsrIdBits-1:0]      CsrIdChipmon = 'd2;
+  localparam [CsrIdBits-1:0]      CsrIdProtect = 'd3;
+  localparam [CsrIdBits-1:0]      CsrIdHbm = 'd4;
+  localparam [CsrIdBits-1:0]      CsrIdIic = 'd5;
+  localparam [CsrIdBits-1:0]      CsrIdLed = 'd6;
+  localparam [CsrIdBits-1:0]      CsrIdGpio = 'd7;
+  localparam [CsrIdBits-1:0]      CsrIdFan = 'd8;
+  localparam [CsrIdBits-1:0]      CsrIdCmac = 'd9;
+  localparam [CsrIdBits-1:0]      CsrIdPcie = 'd10;
 
-  localparam [3:0] BcSpaceIdAny = 4'hf;
+  localparam integer              BlockIdBits = 16; // must be multiple of 8
+
+  localparam [BlockIdBits-1:0]    BcBlockIdAny = {(BlockIdBits){1'b1}};
+  localparam [BlockIdBits-1:0]    BcBlockIdUser = {1'b1, {(BlockIdBits-1){1'b1}} };
+
+  localparam integer              SpaceIdBits = 4; // 2X this (space+id) must be multiple of 8
+
+  localparam [SpaceIdBits-1:0]    BcSpaceIdAny = {(SpaceIdBits){1'b1}};
 
   // SIMPLE PARALLEL CSR PROTOCOL
 
-  typedef struct   packed {
-    logic [31:0] toblock;
-    logic [31:0] fromblock;
-    logic [5:0]  reserved;
-    logic        write;
-    logic        read;
-    logic [3:0]  space;
-    logic [3:0]  id;
-    logic [31:0] address;
-    logic [31:0] wdata;
+  typedef struct                  packed {
+    logic [BlockIdBits-1:0] toblock;
+    logic [BlockIdBits-1:0] fromblock;
+    logic [5:0]             reserved;
+    logic                   write;
+    logic                   read;
+    logic [SpaceIdBits-1:0] space;
+    logic [SpaceIdBits-1:0] id;
+    logic [31:0]            address;
+    logic [31:0]            wdata;
   } csr_32_noc_s;
 
-  typedef struct packed {
-    logic [31:0] toblock;
-    logic [31:0] fromblock;
-    logic [5:0]  reserved;
-    logic        error;
-    logic        ready;
-    logic [31:0] rdata;
+  typedef struct            packed {
+    logic [BlockIdBits-1:0] toblock;
+    logic [BlockIdBits-1:0] fromblock;
+    logic [5:0]             reserved;
+    logic                   error;
+    logic                   ready;
+    logic [31:0]            rdata;
   } csr_32_noc_fb_s;
 
-  typedef struct   packed {
-    logic [31:0] toblock;
-    logic [5:0]  reserved;
-    logic        write;
-    logic        read;
-    logic [3:0]  space;
-    logic [3:0]  id;
-    logic [31:0] address;
-    logic [31:0] wdata;
+  typedef struct            packed {
+    logic [BlockIdBits-1:0] toblock;
+    logic [5:0]             reserved;
+    logic                   write;
+    logic                   read;
+    logic [SpaceIdBits-1:0] space;
+    logic [SpaceIdBits-1:0] id;
+    logic [31:0]            address;
+    logic [31:0]            wdata;
   } csr_32_tree_s;
 
-  typedef struct packed {
-    logic [5:0]  reserved;
-    logic        error;
-    logic        ready;
-    logic [31:0] rdata;
+  typedef struct            packed {
+    logic [5:0]             reserved;
+    logic                   error;
+    logic                   ready;
+    logic [31:0]            rdata;
   } csr_32_tree_fb_s;
 
- typedef struct packed {
-    logic [5:0]  reserved;
-    logic        write;
-    logic        read;
-    logic [3:0]  space;
-    logic [3:0]  id;
-    logic [31:0] address;
-    logic [31:0] wdata;
+  typedef struct            packed {
+    logic [5:0]             reserved;
+    logic                   write;
+    logic                   read;
+    logic [SpaceIdBits-1:0] space;
+    logic [SpaceIdBits-1:0] id;
+    logic [31:0]            address;
+    logic [31:0]            wdata;
   } csr_32_s;
 
-  typedef struct packed {
-    logic [5:0]  reserved;
-    logic        error;
-    logic        ready;
-    logic [31:0] rdata;
+  typedef struct            packed {
+    logic [5:0]             reserved;
+    logic                   error;
+    logic                   ready;
+    logic [31:0]            rdata;
   } csr_32_fb_s;
 
-  typedef struct packed {
-    logic [5:0]  reserved;
-    logic        write;
-    logic        read;
-    logic [3:0]  space;
-    logic [3:0]  id;
-    logic [63:0] address;
-    logic [63:0] wdata;
+  typedef struct            packed {
+    logic [5:0]             reserved;
+    logic                   write;
+    logic                   read;
+    logic [SpaceIdBits-1:0] space;
+    logic [SpaceIdBits-1:0] id;
+    logic [63:0]            address;
+    logic [63:0]            wdata;
   } csr_64_s;
 
-  typedef struct packed {
-    logic [5:0]  reserved;
-    logic        error;
-    logic        ready;
-    logic [63:0] rdata;
+  typedef struct            packed {
+    logic [5:0]             reserved;
+    logic                   error;
+    logic                   ready;
+    logic [63:0]            rdata;
   } csr_64_fb_s;
 
   // DRP PROTOCOL (XILINX IP)

@@ -8,13 +8,11 @@ import os
 import sys
 import shutil
 import re
-import eda_lib.util as util
+import oc_pylib.util as util
 import queue
 import threading
 import signal
 import curses
-
-debug_respawn = False
 
 class Command:
     def __init__(self, config, command_name):
@@ -29,6 +27,7 @@ class Command:
         self.modified_args = {}
         self.config = config
         self.command_name = command_name
+        self.target = ""
 
     def create_work_dir(self):
         if (not os.path.exists(self.args['eda-dir'])): # use os.path.isfile / isdir also
@@ -38,13 +37,15 @@ class Command:
                 self.args['design'] = self.args['top']
             else:
                 self.args['design'] = "design" # generic, i.e. to create work dir "design_upload"
+        if self.target == "":
+            self.target = self.args['design']
         if self.args['work-dir'] == "":
-            self.args['work-dir'] = os.path.join(self.args['eda-dir'], "%s_%s" % (self.args['design'], self.command_name))
+            self.args['work-dir'] = os.path.join(self.args['eda-dir'], "%s_%s" % (self.target, self.command_name))
         keep_file = os.path.join(self.args['work-dir'], "eda.keep")
         if (os.path.exists(self.args['work-dir'])):
             if os.path.exists(keep_file) and not self.args['force']:
                 self.error("Cannot remove old work dir due to '%s'" % (keep_file))
-            util.info("Removing previous '%s'" % (self.args['work-dir']))
+            util.info(f"Removing previous '{self.args['work-dir']}'")
             shutil.rmtree(self.args['work-dir'])
         os.mkdir(self.args['work-dir'])
         if (self.args['keep']):
@@ -99,12 +100,19 @@ class Command:
             util.debug(f"exec: returned without error (return code: {return_code})")
         return stderr, stdout, return_code
 
+    def set_arg(self, key, value):
+        self.args[key] = value
+        self.modified_args[key] = True
+        util.debug("Set arg['%s']='%s'" % (key, value))
+        # we trap the writing of logfile here, because we must act immediately
+        if key == "logfile": util.start_log(value)
+
     def process_tokens(self, tokens, process_all=True):
         first = True
         while (len(tokens) and (first or process_all)):
             first = False
             # see if it's a flag/option like --debug, --seed <n>, etc, or negating like --no-color
-            m = re.match(r'^\-\-([\w\-]+)$', tokens[0])
+            m = re.match(r'^\-\-([\w\-]+)\S*', tokens[0])
             if m:
                 key = m.group(1)
                 new_state = True
@@ -113,7 +121,7 @@ class Command:
                     key = m.group(1)
                     new_state = False
                 if key in self.args:
-                    tokens.pop(0)
+                    token = tokens.pop(0)
                     if self.args[key]==True or self.args[key]==False: # is this a true/false flag
                         if self.args[key] != new_state:
                             self.args[key] = new_state
@@ -123,14 +131,23 @@ class Command:
                         else:
                             util.debug(f"Would set arg[{key}]={new_state}, but it already is")
                             continue
+                    # this is an arg with a value, not a true/false flag
+                    elif '=' in token:
+                        # it has an "=", is it in --key="some string" form?
+                        m = re.match(r'^[^\=]+\=(\"[^\"]*\")$', token)
+                        if m:
+                            value = m.group(1)
+                            self.set_arg(key, value)
+                            continue
+                        # it has an "=", is it in --key=value form?
+                        m = re.match(r'^[^\=]+\=(\S+)$', token)
+                        if m:
+                            value = m.group(1)
+                            self.set_arg(key, value)
+                            continue
                     elif len(tokens): # this is an arg with a value, not a true/false flag
                         value = tokens.pop(0)
-                        self.args[key] = value
-                        self.modified_args[key] = True
-                        util.debug("Set arg['%s']='%s'" % (key, value))
-                        if key == "logfile":
-                            # we trap the writing of logfile here, because we must act immediately
-                            util.start_log(value)
+                        self.set_arg(key, value)
                         continue
                     else:
                         util.error("Need a value after --%s" % (key))
@@ -197,12 +214,15 @@ class CommandDesign(Command):
 
     def resolve_target(self, target):
         util.debug("Entered resolve_target(%s)" % (target))
-        targets = [ target ]
+        self.target = target
+        m = re.match(r'.*\/([\w\_]+)$', self.target)
+        if m: self.target = m.group(1)
+        targets_todo = [ target ]
         targets_dict = { target : None }
         found_any_target = False
-        while len(targets):
+        while len(targets_todo):
             found_this_target = False
-            t = targets.pop(0)
+            t = targets_todo.pop(0)
             util.debug("Starting to resolve target '%s'" % (t))
             t_path, t_node = os.path.split(t)
             deps_file = os.path.join(t_path, "DEPS")
@@ -278,7 +298,7 @@ class CommandDesign(Command):
                             continue
 
                         # check for setting an EDA argument
-                        m = re.match(r'^\-\-(\w+)$', dep)
+                        m = re.match(r'^\-\-(\w+)\S*$', dep)
                         if m:
                             Command.process_tokens(self, [dep])
                             continue
@@ -295,7 +315,7 @@ class CommandDesign(Command):
                             self.add_file(dep_path)
                         else:
                             util.debug(" - a target needing to be resolved, adding to queue")
-                            targets.append(dep_path)
+                            targets_todo.append(dep_path)
 
             if not found_this_target:
                 util.debug("Haven't been able to resolve %s via DEPS" % (t))
@@ -1357,8 +1377,8 @@ class CommandUploadVivado(CommandUpload, ToolVivado):
         # execute Vivado
         command_list = [ 'vivado', '-source', tcl_file, '-log', f"design.upload.log" ]
         if not self.args['gui']:
-            command_line.append('-mode')
-            command_line.append('batch')
+            command_list.append('-mode')
+            command_list.append('batch')
         self.exec(self.args['work-dir'], command_list)
 
 class ToolQuesta:
@@ -1595,6 +1615,20 @@ def process_tokens(tokens):
     sco = config['command_handler'][command](config) # sub command object
     sco.process_tokens(deferred_tokens)
 
+# **************************************************************
+# **** Interrupt Handler
+
+def signal_handler(sig, frame):
+    util.fancy_stop()
+    util.info('Received Ctrl+C...', start='\nINFO: [EDA] ')
+    util.exit(1)
+
+# **************************************************************
+# **** Startup Code
+
+debug_respawn = False
+util.progname = "EDA"
+
 def main():
     if len(sys.argv)>1:
         # at some point lets use the name of the program to lookup a command translation.  then someone can
@@ -1604,28 +1638,23 @@ def main():
         auto_tool_setup()
         process_tokens(sys.argv[1:])
     else:
-        util.info("*** OpenCOS EDA Tool Wrapper ***")
+        util.info("*** OpenCOS EDA Wrapper ***")
         interactive() # go interactive if not given any arguments
-
-def signal_handler(sig, frame):
-    util.fancy_stop()
-    util.info('Received Ctrl+C...', start='\nINFO: [EDA] ')
-    util.exit(1)
 
 if __name__ == "__main__":
     # First we check if we are respawning
-    eda_path = os.path.realpath(__file__)
-    if debug_respawn: util.debug(f"RESPAWN: eda_path: '{eda_path}'")
+    this_path = os.path.realpath(__file__)
+    if debug_respawn: util.debug(f"RESPAWN: this_path : '{this_path}'")
     oc_root = util.get_oc_root()
-    if debug_respawn: util.debug(f"RESPAWN: oc_root : '{oc_root}'")
+    if debug_respawn: util.debug(f"RESPAWN: oc_root   : '{oc_root}'")
     cwd = util.getcwd()
-    if debug_respawn: util.debug(f"RESPAWN: cwd     : '{cwd}'")
+    if debug_respawn: util.debug(f"RESPAWN: cwd       : '{cwd}'")
     if oc_root and (not '-respawn' in sys.argv):
-        new_eda_path = os.path.join(oc_root, "bin", "eda")
-        if (eda_path != new_eda_path):
+        new_path = os.path.join(oc_root, "bin", "eda")
+        if (this_path != new_path):
             # we are not the correct version of EDA for this Git repo, we should respawn
-            util.info('%s respawning %s in %s' % (eda_path, new_eda_path, cwd))
-            sys.argv[0] = new_eda_path
+            util.info('%s respawning %s in %s' % (this_path, new_path, cwd))
+            sys.argv[0] = new_path
             proc = subprocess.Popen(sys.argv, shell=0, cwd=cwd, universal_newlines=True)
             while True:
                 try:
