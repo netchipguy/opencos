@@ -942,6 +942,7 @@ class CommandFList(CommandDesign):
                     os.remove(self.args['out'])
                 else:
                     util.error(f"Not overwriting {self.args['out']} unless you specify -force")
+            util.debug(f"Opening {self.args['out']} for writing")
             with open( self.args['out'] , 'w' ) as fo:
                 if self.args['emit-define']:
                     for d in self.defines:
@@ -964,6 +965,7 @@ class CommandFList(CommandDesign):
                 if self.args['emit-vhd']:
                     for f in self.files_vhd:
                         print(f"{self.args['prefix-vhd']}{f}", file=fo)
+            util.info(f"Created {self.args['out']}")
 
 class CommandWaves(CommandDesign):
     def __init__(self, config):
