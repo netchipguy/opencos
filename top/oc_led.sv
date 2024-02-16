@@ -30,19 +30,20 @@ module oc_led #(
   // Implement address space 0
 
   // 0 : CSR ID
+  //   [ 7: 0] LedCount
+  //   [31:16] csrId
   // 1 : Prescale
-  //   [9:0] count (period will be count*2097152, so for ~1Hz we have 47 at 100MHz)
+  //   [ 9: 0] count (period will be count*2097152, so for ~1Hz we have 47 at 100MHz)
   // 2->(LedCount+1) : Control
-  //   [1:0]  mode (0 = off, 1 = on, 2 = blink, 3 = heartbeat)
-  //   [13:8] brightness (0-63)
+  //   [ 1: 0]  mode (0 = off, 1 = on, 2 = blink, 3 = heartbeat)
+  //   [13: 8] brightness (0-63)
   //   [18:16] blinks (0-7, valid in mode 2)
 
   localparam integer NumCsr = 2 + LedCount;
-  localparam logic [31:0] CsrId = { oclib_pkg::CsrIdLed,
-                                    8'd0, 8'(LedCount)};
+  localparam logic [31:0] CsrId = { oclib_pkg::CsrIdLed, 8'd0, 8'(LedCount)};
   localparam logic [31:0] InitPrescale = (ClockHz / 2097152);
-  logic [0:NumCsr-1] [31:0] csrConfig;
-  logic [0:NumCsr-1] [31:0] csrStatus;
+  logic [0:NumCsr-1] [31:0] csrOut;
+  logic [0:NumCsr-1] [31:0] csrIn;
 
   oclib_csr_array #(.CsrType(CsrType), .CsrFbType(CsrFbType), .CsrProtocol(CsrProtocol),
                     .NumCsr(NumCsr),
@@ -53,10 +54,10 @@ module oc_led #(
   uCSR (.clock(clock), .reset(resetSync),
         .csr(csr), .csrFb(csrFb),
         .csrRead(), .csrWrite(),
-        .csrConfig(csrConfig), .csrStatus(csrStatus));
+        .csrOut(csrOut), .csrIn(csrIn));
 
   logic [9:0]               prescaleTC;
-  assign prescaleTC = csrConfig[1][9:0];
+  assign prescaleTC = csrOut[1][9:0];
 
   // prescaler
   // this is supposed to divide input clock to generate prescalePulse every ~0.5us
@@ -118,9 +119,9 @@ module oc_led #(
     logic [5:0] ledBright;
     logic [2:0] ledBlinks;
 
-    assign ledMode = csrConfig[2+i][1:0];
-    assign ledBright = csrConfig[2+i][13:8];
-    assign ledBlinks = csrConfig[2+i][18:16];
+    assign ledMode = csrOut[2+i][1:0];
+    assign ledBright = csrOut[2+i][13:8];
+    assign ledBlinks = csrOut[2+i][18:16];
 
     always_ff @(posedge clock) begin
       ledOut[i] <= ((ledMode == 2'b01) ? (ledBright >= tdmValue) :                              // on

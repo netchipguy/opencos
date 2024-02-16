@@ -21,24 +21,56 @@ module oc_cos
     parameter integer RefClockCount = 1,
                       `OC_LOCALPARAM_SAFE(RefClockCount),
     parameter integer RefClockHz [0:RefClockCount-1] = {100_000_000},
+    parameter integer DiffRefClockCount = 0,
+                      `OC_LOCALPARAM_SAFE(DiffRefClockCount),
+    parameter integer DiffRefClockHz [0:DiffRefClockCountSafe-1] = '{DiffRefClockCountSafe{156_250_000}}, // freq, per DiffRefClock
 
     // *** TOP CLOCK ***
     parameter integer ClockTop = oc_top_pkg::ClockIdSingleEndedRef(0),
 
-    // *** CHIPMON ***
+    // *** PLL ***
+    parameter integer PllCount = 1,
+    `OC_LOCALPARAM_SAFE(PllCount),
+    parameter integer PllCountMax = 8,
+    parameter integer PllClockRef [0:PllCountSafe-1] = '{ PllCountSafe { 0 } }, // reference clock, per PLL
+    parameter bit     PllCsrEnable [0:PllCountSafe-1] = '{ PllCountSafe { oclib_pkg::False } }, // whether to include CSRs, per PLL
+    parameter bit     PllMeasureEnable [0:PllCountSafe-1] = '{ PllCountSafe { oclib_pkg::False } }, // enable clock measure, per PLL
+    parameter integer PllClockHz [0:PllCountMax-1] = '{ // per PLL
+                                                        `OC_VAL_ASDEFINED_ELSE(TARGET_PLL0_CLK_HZ,400_000_000),
+                                                        `OC_VAL_ASDEFINED_ELSE(TARGET_PLL1_CLK_HZ,350_000_000),
+                                                        `OC_VAL_ASDEFINED_ELSE(TARGET_PLL2_CLK_HZ,300_000_000),
+                                                        `OC_VAL_ASDEFINED_ELSE(TARGET_PLL3_CLK_HZ,250_000_000),
+                                                        `OC_VAL_ASDEFINED_ELSE(TARGET_PLL4_CLK_HZ,200_000_000),
+                                                        `OC_VAL_ASDEFINED_ELSE(TARGET_PLL5_CLK_HZ,166_666_666),
+                                                        `OC_VAL_ASDEFINED_ELSE(TARGET_PLL6_CLK_HZ,150_000_000),
+                                                        `OC_VAL_ASDEFINED_ELSE(TARGET_PLL7_CLK_HZ,133_333_333) },
+
+     // *** CHIPMON ***
     parameter integer ChipMonCount = 0,
                       `OC_LOCALPARAM_SAFE(ChipMonCount),
     parameter bit     ChipMonCsrEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
     parameter bit     ChipMonI2CEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
 
+    // *** IIC ***
+    parameter integer IicCount = 0,
+                      `OC_LOCALPARAM_SAFE(IicCount),
+    parameter integer IicOffloadEnable = 0,
+
     // *** LED ***
     parameter integer LedCount = 0,
                       `OC_LOCALPARAM_SAFE(LedCount),
 
-    // *** UART ***
-    parameter integer UartCount = 2,
+    // *** GPIO ***
+    parameter integer GpioCount = 0,
+                      `OC_LOCALPARAM_SAFE(GpioCount),
+
+    // *** FAN ***
+    parameter integer FanCount = 0,
+                      `OC_LOCALPARAM_SAFE(FanCount),
+     // *** UART ***
+    parameter integer UartCount = 1,
                       `OC_LOCALPARAM_SAFE(UartCount),
-    parameter integer UartBaud [0:UartCountSafe-1] = {115200, 115200},
+    parameter integer UartBaud [0:UartCountSafe-1] = {115200},
     parameter integer UartControl = 0,
 
     // *******************************************************************************
@@ -58,6 +90,7 @@ module oc_cos
   (
    // *** REFCLOCK ***
    input [RefClockCountSafe-1:0]       clockRef,
+   input [DiffRefClockCount-1:0]       clockDiffRefP, clockDiffRefN,
    // *** RESET ***
    input                               hardReset,
    // *** CHIPMON ***
@@ -65,8 +98,20 @@ module oc_cos
    output logic [ChipMonCountSafe-1:0] chipMonSclTristate,
    input [ChipMonCountSafe-1:0]        chipMonSda = {ChipMonCountSafe{1'b1}},
    output logic [ChipMonCountSafe-1:0] chipMonSdaTristate,
+   // *** IIC ***
+   input [IicCountSafe-1:0]            iicScl = {IicCountSafe{1'b1}},
+   output logic [IicCountSafe-1:0]     iicSclTristate,
+   input [IicCountSafe-1:0]            iicSda = {IicCountSafe{1'b1}},
+   output logic [IicCountSafe-1:0]     iicSdaTristate,
    // *** LED ***
    output logic [LedCountSafe-1:0]     ledOut,
+   // *** GPIO ***
+   output logic [GpioCountSafe-1:0]    gpioOut,
+   output logic [GpioCountSafe-1:0]    gpioTristate,
+   input [GpioCountSafe-1:0]           gpioIn = {GpioCountSafe{1'b0}},
+   // *** FAN ***
+   output logic [FanCountSafe-1:0]     fanPwm,
+   input [FanCountSafe-1:0]            fanSense = {FanCountSafe{1'b0}},
    // *** UART ***
    input [UartCountSafe-1:0]           uartRx,
    output logic [UartCountSafe-1:0]    uartTx,
@@ -76,11 +121,22 @@ module oc_cos
   );
 
   // *******************************************************************************
+  // *** INTERNAL FEATUERS ***
+
+  // *** PROTECT ***
+  parameter integer                    ProtectCount = `OC_VAL_ASDEFINED_ELSE(TARGET_PROTECT_COUNT,0);
+  `OC_LOCALPARAM_SAFE(ProtectCount);
+
+  // *******************************************************************************
   // *** RESOURCE CALCULATIONS ***
 
   localparam integer             BlockFirstChipMon = 0;
-  localparam integer             BlockFirstLed = (BlockFirstChipMon + ChipMonCount);
-  localparam integer             BlockTopCount = (BlockFirstLed + (LedCount ? 1 : 0)); // all LEDs are on one IP
+  localparam integer             BlockFirstIic = (BlockFirstChipMon + ChipMonCount);
+  localparam integer             BlockFirstLed = (BlockFirstIic + IicCount);
+  localparam integer             BlockFirstGpio = (BlockFirstLed + (LedCount ? 1 : 0)); // all LEDs are on one IP
+  localparam integer             BlockFirstFan = (BlockFirstGpio + (GpioCount ? 1 : 0)); // all GPIOs are on one IP
+  localparam integer             BlockFirstProtect = (BlockFirstFan + (FanCount ? 1 : 0)); // all FANs are on one IP
+  localparam integer             BlockTopCount = (BlockFirstProtect + ProtectCount);
   localparam integer             BlockUserCount = 0;
   localparam integer             BlockCount = (BlockTopCount + BlockUserCount);
   `OC_LOCALPARAM_SAFE(BlockCount);
@@ -172,8 +228,29 @@ module oc_cos
               .sda(chipMonSda[i]), .sdaTristate(chipMonSdaTristate[i]),
               .thermalWarning(chipMonThermalWarning[i]), .thermalError(chipMonThermalError[i]));
   end
-  assign chipMonMergedThermalWarning = (ChipMonCount ? (|chipMonThermalWarning) : 1'b0);
-  assign chipMonMergedThermalError = (ChipMonCount ? (|chipMonThermalError) : 1'b0);
+  if (ChipMonCount==0) begin
+    assign chipMonThermalWarning = '0;
+    assign chipMonThermalError = '0;
+  end
+  assign chipMonMergedThermalWarning = (|chipMonThermalWarning);
+  assign chipMonMergedThermalError = (|chipMonThermalError);
+
+  // *******************************************************************************
+  // *** IIC ***
+
+  for (genvar i=0; i<IicCount; i++) begin : iic
+    oc_iic #(.ClockHz(ClockTopHz), .OffloadEnable(IicOffloadEnable),
+             .CsrType(CsrTopType), .CsrFbType(CsrTopFbType), .CsrProtocol(CsrTopProtocol),
+             .ResetSync(oclib_pkg::False), .ResetPipeline(DefaultTopResetPipeline))
+    uIIC (.clock(clockTop), .reset(resetTop),
+          .csr(csrTop[BlockFirstIic+i]), .csrFb(csrTopFb[BlockFirstIic+i]),
+          .iicScl(iicScl), .iicSclTristate(iicSclTristate),
+          .iicSda(iicSda), .iicSdaTristate(iicSdaTristate));
+  end
+  if (IicCount == 0) begin
+    assign iicSclTristate = { IicCountSafe { 1'b1 }};
+    assign iicSdaTristate = { IicCountSafe { 1'b1 }};
+  end
 
   // *******************************************************************************
   // *** LED ***
@@ -188,6 +265,37 @@ module oc_cos
   end
   else begin
     assign ledOut = '0;
+  end
+
+  // *******************************************************************************
+  // *** GPIO ***
+
+  if (GpioCount) begin
+    oc_gpio #(.ClockHz(ClockTopHz), .GpioCount(GpioCount),
+              .CsrType(CsrTopType), .CsrFbType(CsrTopFbType), .CsrProtocol(CsrTopProtocol),
+              .ResetSync(oclib_pkg::False), .ResetPipeline(DefaultTopResetPipeline))
+    uGPIO (.clock(clockTop), .reset(resetTop),
+           .csr(csrTop[BlockFirstGpio]), .csrFb(csrTopFb[BlockFirstGpio]),
+           .gpioOut(gpioOut), .gpioTristate(gpioTristate), .gpioIn(gpioIn));
+  end
+  else begin
+    assign gpioOut = '0;
+    assign gpioTristate = '1;
+  end
+
+  // *******************************************************************************
+  // *** FAN ***
+
+  if (FanCount) begin
+    oc_fan #(.ClockHz(ClockTopHz), .FanCount(FanCount),
+              .CsrType(CsrTopType), .CsrFbType(CsrTopFbType), .CsrProtocol(CsrTopProtocol),
+              .ResetSync(oclib_pkg::False), .ResetPipeline(DefaultTopResetPipeline))
+    uFAN (.clock(clockTop), .reset(resetTop),
+          .csr(csrTop[BlockFirstGpio]), .csrFb(csrTopFb[BlockFirstGpio]),
+          .fanPwm(fanPwm), .fanSense(fanSense));
+  end
+  else begin
+    assign fanPwm = '0;
   end
 
   // *******************************************************************************

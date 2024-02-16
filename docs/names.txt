@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MPL-2.0
+
+# This is a human-maintained but ideally machine parsable mapping of names
+
+# Where convenient, this file should be parsed versus embedding names in code,
+# which is what OC_CLI does.
+
+# Once assigned, names are not changed, so it's OK to use: `define OC_VENDOR 1
+# to indicate Xilinx in some RTL code.  There doesn't yet seem to be cause to
+# bring in automation to create SystemVerilog defines and such, as each board
+# just needs to set a couple of these statically.
+
+# all values in this file are in hex
+
+-- OC_VENDOR --
+
+0000: "None"
+0001: "Xilinx"
+
+-- OC_BOARD --
+
+0000: "None"
+0001: "JC35"
+0002: "U200"
+0003: "U50"
+0004: "U55N"
+0005: "U50C"
+
+
+-- OC_LIBRARY --
+
+0000: "None"
+0001: "Ultrascale+"

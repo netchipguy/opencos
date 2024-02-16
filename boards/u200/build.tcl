@@ -64,9 +64,22 @@ set tt "# ********************************"
 
 config_ip_cache -use_cache_location ${oc_root}/boards/ip_cache
 
-source ${oc_root}/boards/vendors/xilinx/xip_vio_i32_o32.tcl
-source ${oc_root}/boards/vendors/xilinx/xip_ila_d1024_i128_t32.tcl
-source ${oc_root}/boards/vendors/xilinx/xip_ila_d8192_i128_t32.tcl
+if { 0 } {
+    source ${oc_root}/boards/vendors/xilinx/xip_vio_i32_o32.tcl
+    source ${oc_root}/boards/vendors/xilinx/xip_ila_d1024_i128_t32.tcl
+    source ${oc_root}/boards/vendors/xilinx/xip_ila_d8192_i128_t32.tcl
+    source ${oc_root}/boards/vendors/xilinx/xip_iic.tcl
+} else {
+    set xci_file_list [list]
+    set ip_run_list [list]
+    set new_ip_method 1
+    source ${oc_root}/boards/vendors/xilinx/source_before_ips.tcl
+    source ${oc_root}/boards/vendors/xilinx/xip_vio_i32_o32.tcl
+    source ${oc_root}/boards/vendors/xilinx/xip_ila_d1024_i128_t32.tcl
+    source ${oc_root}/boards/vendors/xilinx/xip_ila_d8192_i128_t32.tcl
+    source ${oc_root}/boards/vendors/xilinx/xip_iic.tcl
+    source ${oc_root}/boards/vendors/xilinx/source_after_ips.tcl
+}
 
 set tt "# ********************************"
 set tt "# SYNTH design"

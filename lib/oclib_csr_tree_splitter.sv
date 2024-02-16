@@ -104,8 +104,8 @@ module oclib_csr_tree_splitter
             .aIn(in), .aOut(inFb), .bOut(inNormal), .bIn(inNormalFb));
 
     // use a BC message splitter
-    oclib_pkg::bc_8b_bidi_s outSplit [OutputsSafe-1:0];
-    oclib_pkg::bc_8b_bidi_s outSplitFb [OutputsSafe-1:0];
+    oclib_pkg::bc_8b_bidi_s outSplit [0:OutputsSafe-1];
+    oclib_pkg::bc_8b_bidi_s outSplitFb [0:OutputsSafe-1];
 
     oclib_bc_tree_splitter #(.BcType(oclib_pkg::bc_8b_bidi_s),
                              .UpProtocol(CsrInProtocol),

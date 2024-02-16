@@ -7,7 +7,7 @@
 module ocsim_uart
   #(
     parameter integer Baud = 115200,
-    parameter integer Verbose = 1
+    parameter integer Verbose = oclib_pkg::False
     )
   (
    input        rx,
@@ -191,7 +191,7 @@ module ocsim_uart
 
   task WaitForIdle( integer maxNS = 1000000 );
     int i;
-    $display("%t %m: Waiting for expectQ to empty (%0dns max)", $realtime, maxNS);
+    if (Verbose) $display("%t %m: Waiting for expectQ to empty (%0dns max)", $realtime, maxNS);
     while (expectQ.size() && (i < maxNS)) begin
       #1ns;
       i=i+1;
@@ -200,7 +200,7 @@ module ocsim_uart
       `OC_ERROR($sformatf("expectQ still has %0d entries after waiting %0dns!", expectQ.size(), maxNS));
     end
     else begin
-      $display("%t %m: expectQ is empty (waited %0dns)", $realtime, i);
+      if (Verbose) $display("%t %m: expectQ is empty (waited %0dns)", $realtime, i);
     end
   endtask // WaitForIdle
 

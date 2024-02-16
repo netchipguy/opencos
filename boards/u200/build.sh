@@ -12,11 +12,16 @@
 
 python3 ../../bin/eda flist oc_chip_top --out "./build.flist" --force \
     +define+SYNTHESIS \
+    +define+OC_VENDOR=1 \
+    +define+OC_BOARD=2 \
+    +define+OC_LIBRARY=1 \
     +define+OC_LIBRARY_XILINX \
     +define+OC_LIBRARY_ULTRASCALE_PLUS \
     +define+OC_BOARD_TOP_DEBUG \
     +define+OC_UART_CONTROL_INCLUDE_VIO_DEBUG \
     +define+OC_UART_CONTROL_INCLUDE_ILA_DEBUG \
+    +define+OC_IIC_INCLUDE_ILA_DEBUG \
+    +define+OC_BOARD_IIC_OFFLOAD_ENABLE \
     --no-emit-incdir \
     --no-quote-define \
     --prefix-define "oc_set_project_define " \

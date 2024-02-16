@@ -1,0 +1,15 @@
+
+# SPDX-License-Identifier: MPL-2.0
+
+#eda_multi ignore synth
+
+oc_chip_harness:
+        oc_chip_harness.sv
+        ../oc_chip_top
+
+oc_chip_top_test:
+        --top=oc_cos_test
+        +define+OC_CHIP_HARNESS_TEST
+        +define+OC_BOARD_UART_BAUD={10_000_000,115_200}
+        ../../../top/tests/oc_cos_test
+        oc_chip_harness

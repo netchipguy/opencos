@@ -162,7 +162,7 @@ block_table = {}
 
 
 class Block():
-    def __init__(self, channel, blockid, name):
+    def __init__(self, channel, blockid, name="Unknown"):
         self.channel = channel
         self.blockid = blockid
         self.name = name
@@ -444,11 +444,73 @@ class BlockLED(Block):
                 for i in range(self.numled): self.csr_write32(0, 8 + (  i*4), ((blinks<<16) | (bright<<8) | command) )
             else:                            self.csr_write32(0, 8 + (led*4), ((blinks<<16) | (bright<<8) | command) )
 
+class BlockIIC(Block):
+    def __init__(self, channel, blockid):
+        Block.__init__(self, channel, blockid, "IIC")
+
+    def connect(self):
+        Block.connect(self)
+        data = self.csr_read32(0, 0)
+        self.csrid = ((data >> 16) & 0xffff)
+        self.offload_type = ((data >> 4) & 0xfff)
+        self.offload_enable = ((data) & 0x1)
+        names = { 0 : 'None', 1: 'Xilinx', }
+        offload = names[self.offload_type] if self.offload_type in names else 'Unknown'
+        util.debug(f"Connect: {self} CsrId={self.csrid} OffloadEnable={self.offload_enable} OffloadType={self.offload_type} ({offload})")
+
+    def command_show(self, parts=[], help_line=False):
+        if help_line: return "Shows high level status of the block in human readable form";
+        util.info(f"{self}: OffloadEnable={self.offload_enable} OffloadType={self.offload_type}")
+        data = self.csr_read32(0, 4)
+        scl_in = "HIGH (IDLE)" if data&0x08 else "LOW (ACTIVE)"
+        sda_in = "HIGH (IDLE)" if data&0x80 else "LOW (ACTIVE)"
+        if data&0x01:  scl_in += " (MANUAL MODE)"
+        if data&0x10:  sda_in += " (MANUAL MODE)"
+        util.info(f"{self}: SCL: {scl_in} SDA: {sda_in}")
+
+    def command_dump(self, parts=[], help_line=False):
+        if help_line: return "Dumps detailed config/status info of the block in human readable form";
+        self.info(f"Dumping {self}:")
+        self.dump_reg(0, 0x0000, "OcID", [ [31,16,"ID"], [15, 4,"OFFLOAD_TYPE"], [ 0, 0,"OFFLOAD_ENABLE"] ])
+        self.dump_reg(0, 0x0004, "Control", [ [31,31,"OFFLOAD_INTERRUPT"], [30,30,"OFFLOAD_DEBUG"],
+                                              [7,7,"SDA_IN"], [5,5,"SDA_TRISTATE"], [4,4,"SDA_MANUAL"],
+                                              [3,3,"SCL_IN"], [1,1,"SCL_TRISTATE"], [0,0,"SCL_MANUAL"] ])
+
+class BlockGPIO(Block):
+    def __init__(self, channel, blockid):
+        Block.__init__(self, channel, blockid, "GPIO")
+
+    def connect(self):
+        Block.connect(self)
+        data = self.csr_read32(0, 0)
+        self.csrid = ((data >> 16) & 0xffff)
+        self.numgpio = ((data) & 0xff)
+        util.debug(f"Connect: {self} CsrId={self.csrid} NumGpio={self.numgpio}")
+
+    def gpio_status(self, gpio):
+        data = self.csr_read32(0, 4 + (gpio*4))
+        if (data & 0x10): s = "driving " + "HIGH" if (data & 0x01) else "LOW"
+        else:             s = "not driving (tristate)"
+        s += (", receiving " + ("HIGH" if (data & 0x100) else "LOW"))
+        return s
+
+    def command_show(self, parts=[], help_line=False):
+        if help_line: return "Shows high level status of the block in human readable form";
+        for i in range(self.numgpio):
+            util.info(f"GPIO {i+1:3}/{self.numgpio:3}: {self.gpio_status(i):20}")
+
+    def command_dump(self, parts=[], help_line=False):
+        if help_line: return "Dumps detailed config/status info of the block in human readable form";
+        self.info(f"Dumping {self}:")
+        data = self.dump_reg(0, 0x0000, "OcID", [ [31,16,"ID"], [7,0,"GPIO_COUNT"] ])
+
 # **** Register all the block classes into a table that can be queried by GUI
 
 block_table[0] = { 'name' : 'Unknown'    , 'csrid' :  0, 'handler' : Block           }
 block_table[2] = { 'name' : 'ChipMon'    , 'csrid' :  2, 'handler' : BlockChipMon    }
+block_table[5] = { 'name' : 'IIC'        , 'csrid' :  5, 'handler' : BlockIIC        }
 block_table[6] = { 'name' : 'LED'        , 'csrid' :  6, 'handler' : BlockLED        }
+block_table[7] = { 'name' : 'GPIO'       , 'csrid' :  7, 'handler' : BlockGPIO       }
 
 # **************************************************************
 # *** Channels
@@ -477,15 +539,6 @@ class Channel:
         self.chip_info_strings = None
         self.chip_timers = None
 
-    def lookup_table_string(self, table, i):
-        if isinstance(table, list):
-            if i >= len(table): return "INVALID"
-            return table[i]
-        if isinstance(table, dict):
-            if i not in table: return "INVALID"
-            return table[i]
-        return "INVALID_TABLE"
-
     def show_chip_info(self):
         self.chip_info_load()
         util.info(f"Version          : {self.chip_info_strings['version']:8}")
@@ -493,11 +546,11 @@ class Channel:
         util.info(f"Bitstream ID     : {self.chip_info_strings['bitstream_id']:8}")
         util.info(f"Build Date       : {self.chip_info_strings['build_date']:8}")
         util.info(f"Build Time       : {self.chip_info_strings['build_time']:8}")
-        util.info(f"Board Vendor     : {self.chip_info_strings['board_vendor']:8}")
-        util.info(f"Board Name       : {self.chip_info_strings['board_name']:8}")
-        util.info(f"Board Library    : {self.chip_info_strings['board_library']:8}")
-        util.info(f"Blocks Top       : {self.chip_info_strings['blocks_top']:8}")
-        util.info(f"Blocks User      : {self.chip_info_strings['blocks_user']:8}")
+        util.info(f"Vendor Name      : {self.chip_info_strings['vendor_name']:8}")
+        util.info(f"Library Name     : {self.chip_info_strings['library_name']:8}")
+        util.info(f"Board Bame       : {self.chip_info_strings['board_name']:8}")
+        util.info(f"Block Top Count  : {self.chip_info_strings['block_top_count']:8}")
+        util.info(f"Block User Count : {self.chip_info_strings['block_user_count']:8}")
         util.info(f"Block Protocol   : {self.chip_info_strings['block_protocol']:8}")
         util.info(f"Userspace        : {self.chip_info_strings['userspace']}")
         util.info(f"UUID             : {self.chip_info_strings['uuid']}")
@@ -522,10 +575,11 @@ class Channel:
             temp32 = self.csr_read32(b, 0, 0)
             csrid = ((temp32 >> 16) & 0xffff)
             params = (temp32 & 0xffff)
-            name = self.lookup_table_string(self.csrid_table, csrid)
+            name = lookup_table_string(self.csrid_table, csrid)
             util.info(f"Block {name:12} [{b:04x}] CsrId={csrid:04x} Params={params:04x}")
             if create_handlers and (force_new_handlers or not b in self.block_handler):
-                handler = self.block_dict[name.lower()]['handler']
+                if name.lower() in self.block_dict: handler = self.block_dict[name.lower()]['handler']
+                else: handler = self.block_dict['unknown']['handler']
                 self.create_block_handler(b, handler)
 
 # SerialChannel is a subclass of channel that knows how to talk to the chip over serial methods (TCP Socket, or PySerial)
@@ -622,22 +676,19 @@ class SerialChannel(Channel):
         b = self.serial_read(64)
         self.chip_info_bytes = b
         self.chip_info_strings = {
-            'version'        : ("%02x" % (b[0])),
-            'builder_id'     : ("%06x" % ((b[1] << 16) | (b[2] << 8) | (b[3]))),
-            'bitstream_id'   : ("%08x" % ((b[4] << 24) | (b[5] << 16) | (b[6] << 8) | (b[7]))),
-            'build_date'     : ("%04x/%02x/%02x" % ((b[8] << 8) | (b[9]), (b[10]), (b[11]) )),
-            'build_time'     : ("%02x:%02x" % ((b[12]), (b[13]))),
-            'board_vendor'   : self.lookup_table_string(['Unknown', 'Xilinx'],
-                                                        ((b[14] << 8) | (b[15]))),
-            'board_name'     : self.lookup_table_string(['Unknown', 'VCU1525', 'AU200', 'AU50', 'AU55N', 'AU50C', 'JC35'],
-                                                        ((b[16] << 8) | (b[17]))),
-            'board_library'  : self.lookup_table_string(['Unknown', 'Ultrascale+'],
-                                                        ((b[18] << 8) | (b[19]))),
-            'blocks_top'     : ("%04x" % ((b[20] << 8) | (b[21]))),
-            'blocks_user'    : ("%04x" % ((b[22] << 8) | (b[23]))),
-            'block_protocol' : ("%02x" % (b[24])),
-            'userspace'      : "",
-            'uuid'           : "",
+            'version'          : ("%02x" % (b[0])),
+            'builder_id'       : ("%06x" % ((b[1] << 16) | (b[2] << 8) | (b[3]))),
+            'bitstream_id'     : ("%08x" % ((b[4] << 24) | (b[5] << 16) | (b[6] << 8) | (b[7]))),
+            'build_date'       : ("%04x/%02x/%02x" % ((b[8] << 8) | (b[9]), (b[10]), (b[11]) )),
+            'build_time'       : ("%02x:%02x" % ((b[12]), (b[13]))),
+            'vendor_name'      : lookup_table_string('OC_VENDOR', ((b[14] << 8) | (b[15]))),
+            'library_name'     : lookup_table_string('OC_LIBRARY', ((b[16] << 8) | (b[17]))),
+            'board_name'       : lookup_table_string('OC_BOARD', ((b[18] << 8) | (b[19]))),
+            'block_top_count'  : ("%04x" % ((b[20] << 8) | (b[21]))),
+            'block_user_count' : ("%04x" % ((b[22] << 8) | (b[23]))),
+            'block_protocol'   : ("%02x" % (b[24])),
+            'userspace'        : "",
+            'uuid'             : "",
         }
         for i in range (0, 16): self.chip_info_strings['userspace'] += chr(b[32+i])
         for i in range (0, 16): self.chip_info_strings['uuid']      += ("%02x" % (b[48+i]))
@@ -793,7 +844,7 @@ def process_tokens(ch, parts):
             ch.reset()
         elif command == 'debug':
             if (len(parts) < 1):
-                util.info("Debug level is currently %d, change with 'debug <level>'" % (debug))
+                util.info(f"Debug level is currently {util.debug_level}, change with 'debug <level>'")
                 return
             util.set_debug_level( eval_number(parts.pop(0)) )
         elif command == 'set':
@@ -844,8 +895,8 @@ def process_tokens(ch, parts):
                     if on_this_line == 8:
                         print("")
                         on_this_line = 0
-                    if (on_this_line):
-                        print("")
+                if (on_this_line):
+                    print("")
             else:
                 ch.csr_read32(current_block, current_space, address, verbose=True)
         elif command == 'write' or command == 'wr' or command == 'w':
@@ -951,6 +1002,52 @@ class HandledError(Exception):
     pass
 
 # **************************************************************
+# **** Read name arrays from shared file
+
+name_tables = {
+    'OC_VENDOR' : {},
+    'OC_LIBRARY' : {},
+    'OC_BOARD' : {},
+}
+
+def parse_names():
+    global name_tables
+    this_file = os.path.realpath(__file__)
+    current_table = None
+    filename = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'docs', 'names.txt')
+    line = 0
+    with open(filename, 'r') as f:
+        line += 1
+        for line in f:
+            # discard comments
+            m = re.match(r'^([^\#]*).*$', line)
+            if m:
+                line = m.group(1)
+            m = re.match(r'^\s*\-\-\s+(\w+)\s+\-\-\s*$', line)
+            if m:
+                current_table = m.group(1)
+                if current_table not in name_tables:
+                    util.error(f"Unknown table {current_table} found at {filename}:{line}")
+            m = re.match(r'^\s*([0-9a-fA-F]+)\s*\:\s*\"(.*)\"\s*$', line)
+            if m:
+                if current_table == None:
+                    util.error(f"Entry outside of table declaration found at {filename}:{line}")
+                name_tables[current_table][int(m.group(1),16)] = m.group(2)
+    print(name_tables)
+
+def lookup_table_string(table, index):
+    if isinstance(table, str) and table in name_tables:
+        if index not in name_tables[table]: return "INVALID"
+        return name_tables[table][index]
+    if isinstance(table, list):
+        if index >= len(table): return "INVALID"
+        return table[index]
+    if isinstance(table, dict):
+        if index not in table: return "INVALID"
+        return table[index]
+    return "INVALID_TABLE"
+
+# **************************************************************
 # **** Startup Code
 
 debug_respawn = False
@@ -994,6 +1091,7 @@ def main():
         usage()
         sys.exit(-3)
 
+    parse_names()
     interactive(ch)
     ch.close()
 

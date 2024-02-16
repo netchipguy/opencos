@@ -13,31 +13,48 @@ module oc_cos_test
     // *******************************************************************************
 
     // *** MISC ***
-    parameter integer Seed = 0,
-    parameter bit     EnableUartControl = 1,
+    parameter integer Seed = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_SEED,0),
+    parameter bit     EnableUartControl = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_ENABLE_UART_CONTROL,1),
 
     // *** REFCLOCK ***
     parameter integer RefClockCount = 1,
                       `OC_LOCALPARAM_SAFE(RefClockCount),
-    parameter integer RefClockHz [0:RefClockCount-1] = {100_000_000},
+    parameter integer RefClockHz [0:RefClockCount-1] = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_REFCLOCK_HZ,'{RefClockCount{156_250_000}}),
+    parameter integer DiffRefClockCount = 2,
+                      `OC_LOCALPARAM_SAFE(DiffRefClockCount),
+    parameter integer DiffRefClockHz [0:DiffRefClockCountSafe-1] = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_DIFFREFCLOCK_HZ,
+                      '{DiffRefClockCountSafe{161_132_812}}),
 
     // *** TOP CLOCK ***
     parameter integer ClockTop = oc_top_pkg::ClockIdSingleEndedRef(0),
 
     // *** CHIPMON ***
-    parameter integer ChipMonCount = 1,
+    parameter integer ChipMonCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_CHIPMON_COUNT,1),
                       `OC_LOCALPARAM_SAFE(ChipMonCount),
     parameter bit     ChipMonCsrEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
     parameter bit     ChipMonI2CEnable [ChipMonCountSafe-1:0] = '{ ChipMonCountSafe { oclib_pkg::True } },
 
+    // *** IIC ***
+    parameter integer IicCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_IIC_COUNT,1),
+                      `OC_LOCALPARAM_SAFE(IicCount),
+    parameter integer IicOffloadEnable = `OC_VAL_IFDEF(OC_BOARD_IIC_OFFLOAD_ENABLE),
+
     // *** LED ***
-    parameter integer LedCount = 3,
+    parameter integer LedCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_LED_COUNT,3),
                       `OC_LOCALPARAM_SAFE(LedCount),
+
+    // *** GPIO ***
+    parameter integer GpioCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_GPIO_COUNT,17),
+                      `OC_LOCALPARAM_SAFE(GpioCount),
+
+    // *** FAN ***
+    parameter integer FanCount = `OC_VAL_ASDEFINED_ELSE(OC_BOARD_FAN_COUNT,0),
+                      `OC_LOCALPARAM_SAFE(FanCount),
 
     // *** UART ***
     parameter integer UartCount = 2,
                       `OC_LOCALPARAM_SAFE(UartCount),
-    parameter integer UartBaud [0:UartCountSafe-1] = {10_000_000, 115200},
+    parameter integer UartBaud [0:UartCountSafe-1] = {10_000_000,115_200},
     parameter integer UartControl = 0,
 
     // *******************************************************************************
@@ -63,6 +80,7 @@ module oc_cos_test
 
   // *** REFCLOCK ***
   logic [RefClockCountSafe-1:0] clockRef;
+  logic [DiffRefClockCount-1:0] clockDiffRefP, clockDiffRefN;
   // *** RESET ***
   logic                         hardReset;
   // *** CHIPMON ***
@@ -87,10 +105,39 @@ module oc_cos_test
   for (genvar i=0; i<RefClockCount; i++) begin
     ocsim_clock #(.ClockHz(RefClockHz[i])) uCLOCK (.clock(clockRef[i]));
   end
+  for (genvar i=0; i<DiffRefClockCount; i++) begin
+    ocsim_clock #(.ClockHz(DiffRefClockHz[i])) uDIFFCLOCK (.clock(clockDiffRefP[i]));
+    assign clockDiffRefN[i] = ~clockDiffRefP[i];
+  end
   ocsim_reset uHARD_RESET (.clock(clockRef[0]), .reset(hardReset));
 
   ocsim_uart #(.Baud(UartBaud[UartControl]), .Verbose(Verbose))
   uCONTROL_UART (.rx(uartTx[0]), .tx(uartRx[0]));
+
+  // in OC_COS testing mode (default), we pass params from above and the DUT conforms to what
+  // we setup.  In BOARD testing mode, we don't override the board params, just config the TB
+  // to match the board.  It's up to us to config the TB as needed to match the board.  It
+  // shouldn't require different defines for the TB vs BOARD params, but we may have to revisit.
+
+`ifdef OC_CHIP_HARNESS_TEST
+
+  oc_chip_harness #(.Seed(Seed))
+  uHARNESS (
+            .clockRef(clockRef),
+            .clockDiffRefP(clockDiffRefP), .clockDiffRefN(clockDiffRefN),
+            .hardReset(hardReset),
+            .chipMonScl(chipMonScl),
+            .chipMonSclTristate(chipMonSclTristate),
+            .chipMonSda(chipMonSda),
+            .chipMonSdaTristate(chipMonSdaTristate),
+            .ledOut(ledOut),
+            .uartRx(uartRx),
+            .uartTx(uartTx),
+            .thermalWarning(thermalWarning),
+            .thermalError(thermalError)
+            );
+
+`else
 
   oc_cos #(.Seed(Seed),
            .EnableUartControl(EnableUartControl),
@@ -117,6 +164,8 @@ module oc_cos_test
         .thermalWarning(thermalWarning),
         .thermalError(thermalError)
         );
+
+  `endif
 
   task TestExpectBanner();
     uCONTROL_UART.Expect(8'h0d);
@@ -297,6 +346,9 @@ module oc_cos_test
     TestExpectIdle();
   endtask // TestInfo
 
+  string csrModuleName;
+  initial csrModuleName = $sformatf("%m.CSR");
+
   task CsrRead(input [oclib_pkg::BlockIdBits-1:0] block,
                input [oclib_pkg::SpaceIdBits-1:0] space,
                input [31:0]                       address,
@@ -308,7 +360,7 @@ module oc_cos_test
     logic [0:RequestBytes-1] [7:0] payloadRequest;
     logic [0:ResponseBytes-1] [7:0] payloadResponse;
 
-    $display("%t %m: *** Reading [%02x][%1x][%08x] => ...", $realtime, block, space, address);
+    $display("%t %s: Read     ....   <= [%02x][%1x][%08x]", $realtime, csrModuleName, block, space, address);
     csr = '0;
     csr.toblock = block;
     csr.space = space;
@@ -325,7 +377,7 @@ module oc_cos_test
     `OC_ASSERT_EXPECTED(csrFb.ready,1);
     `OC_ASSERT_EXPECTED(csrFb.error,0);
     data = csrFb.rdata;
-    $display("%t %m: *** Read    [%02x][%1x][%08x] => %08x", $realtime, block, space, address, data);
+    $display("%t %s:        %08x <= [%02x][%1x][%08x] (OK)", $realtime, csrModuleName, data, block, space, address);
     uCONTROL_UART.WaitForIdle();
     uCONTROL_UART.SendEnter();
     TestExpectPrompt();
@@ -344,7 +396,7 @@ module oc_cos_test
     logic [0:RequestBytes-1] [7:0] payloadRequest;
     logic [0:ResponseBytes-1] [7:0] payloadResponse;
 
-    $display("%t %m: *** Expecting [%02x][%1x][%08x] => %08x", $realtime, block, space, address, data);
+    $display("%t %s: Expect %08x <= [%02x][%1x][%08x]", $realtime, csrModuleName, data, block, space, address);
     csr = '0;
     csr.read = 1;
     csr.toblock = block;
@@ -361,6 +413,7 @@ module oc_cos_test
     `OC_ASSERT_EQUAL(csrFb.ready, ready);
     `OC_ASSERT_EQUAL(csrFb.error, error);
     `OC_ASSERT_EQUAL(csrFb.rdata, data);
+    $display("%t %s:        %08x <= [%02x][%1x][%08x] (OK, Match)", $realtime, csrModuleName, data, block, space, address);
     uCONTROL_UART.WaitForIdle();
     uCONTROL_UART.SendEnter();
     TestExpectPrompt();
@@ -373,14 +426,14 @@ module oc_cos_test
                 input [31:0]                       rdata = '0,
                 input                              ready = 1,
                 input                              error = 0);
-     CsrTopProtocol csr;
+    CsrTopProtocol csr;
     CsrTopFbProtocol csrFb;
     localparam int RequestBytes = (($bits(csr)+7)/8);
     localparam int ResponseBytes = (($bits(csrFb)+7)/8);
     logic [0:RequestBytes-1] [7:0] payloadRequest;
     logic [0:ResponseBytes-1] [7:0] payloadResponse;
 
-    $display("%t %m: *** Writing  [%02x][%1x][%08x] <= %08x", $realtime, block, space, address, data);
+    $display("%t %s: Write  %08x => [%02x][%1x][%08x]", $realtime, csrModuleName, data, block, space, address);
     csr = '0;
     csr.write = 1;
     csr.toblock = block;
@@ -397,6 +450,7 @@ module oc_cos_test
     `OC_ASSERT_EQUAL(csrFb.ready, ready);
     `OC_ASSERT_EQUAL(csrFb.error, error);
     `OC_ASSERT_EQUAL(csrFb.rdata, rdata);
+    $display("%t %s:        %08x => [%02x][%1x][%08x] (OK)", $realtime, csrModuleName, data, block, space, address);
     uCONTROL_UART.WaitForIdle();
     uCONTROL_UART.SendEnter();
     TestExpectPrompt();
@@ -408,6 +462,7 @@ module oc_cos_test
   integer                           foundIics = 0;
   integer                           foundLeds = 0;
   integer                           foundGpios = 0;
+  integer                           foundFans = 0;
   integer                           foundHbms = 0;
   integer                           foundCmacs = 0;
   integer                           foundUnknowns = 0;
@@ -422,28 +477,43 @@ module oc_cos_test
     $display("%t %m: ******************************************", $realtime);
     for (b=0; b<blockTopCount; b++) begin
 
-      logic [7:0] InternalReference;
       $display("%t %m: ****************************", $realtime);
       $display("%t %m: Reading Block %0d...", $realtime, b);
       CsrRead(b, 0, 32'h0, {blockType, blockParams});
 
       if (blockType == oclib_pkg::CsrIdChipMon) begin : chipmon
-        $display("%t %m: Found: Type %04x: CHIPMON #%0d", $realtime, blockType, foundChipMons);
+        logic InternalReference;
+        logic [11:0] ChipMonType;
+        $display("%t %m: *** Found: Type %04x: CHIPMON #%0d ***", $realtime, blockType, foundChipMons);
+        ChipMonType = blockParams[15:4];
         InternalReference = blockParams[0];
         $display("%t %m: Param: InternalReference=%0d", $realtime, InternalReference);
+        $display("%t %m: Param: ChipMonType=%0d", $realtime, ChipMonType);
         $display("%t %m: Reading temperature (not sure what to expect, hard to predict0", $realtime);
         CsrRead (b, 1, 'h0000, readData); // DRP space
         if (RefClockHz[ClockTop] == 100_000_000) CsrReadCheck (b, 1, 'h0042, 'h1600); // DRP space
-        if (RefClockHz[ClockTop] == 156_250_000) CsrReadCheck (b, 1, 'h0042, 'h2300); // DRP space
+        if (RefClockHz[ClockTop] == 156_250_000) CsrReadCheck (b, 1, 'h0042, 'h2200); // DRP space
         CsrReadCheck (b, 1, 'h0050, 'hb834); // DRP space (this is warning temp high, 85c)
         CsrReadCheck (b, 1, 'h0053, 'hcb00); // DRP space (this is error temp high, 95c)
         $display("%t %m: ****************************", $realtime);
         foundChipMons++;
       end
 
+      else if (blockType == oclib_pkg::CsrIdIic) begin : iic
+        logic [11:0] OffloadType;
+        logic        OffloadEnable;
+        $display("%t %m: *** Found: Type %04x: IIC #%0d ***", $realtime, blockType, foundIics);
+        OffloadType = blockParams[15:4];
+        OffloadEnable = blockParams[0];
+        $display("%t %m: Param: OffloadEnable=%0d", $realtime, OffloadEnable);
+        $display("%t %m: Param: OffloadType=%0d", $realtime, OffloadType);
+        $display("%t %m: ****************************", $realtime);
+        foundIics++;
+      end
+
       else if (blockType == oclib_pkg::CsrIdLed) begin : led
         logic [7:0] NumLeds;
-        $display("%t %m: Found: Type %04x: LED #%0d", $realtime, blockType, foundLeds);
+        $display("%t %m: *** Found: Type %04x: LED #%0d ***", $realtime, blockType, foundLeds);
         NumLeds = blockParams[7:0];
         $display("%t %m: Param: NumLeds=%0d", $realtime, NumLeds);
         CsrRead (b, 0, 'h0004, readData); // Prescale
@@ -458,8 +528,30 @@ module oc_cos_test
         foundLeds++;
       end
 
+      else if (blockType == oclib_pkg::CsrIdGpio) begin : gpio
+        logic [7:0] NumGpios;
+        $display("%t %m: *** Found: Type %04x: GPIO #%0d ***", $realtime, blockType, foundGpios);
+        NumGpios = blockParams[7:0];
+        $display("%t %m: Param: NumGpios=%0d", $realtime, NumGpios);
+        for (i=0; i<NumGpios; i++) begin
+          CsrRead(b, 0, 32'h4 + (i*4), readData);
+          $display("%t %m: GPIO[%4d]: out=%0d, drive=%d, in=%d", $realtime, i, readData[0], readData[4], readData[8]);
+        end
+        $display("%t %m: ****************************", $realtime);
+        foundGpios++;
+      end
+
+      else if (blockType == oclib_pkg::CsrIdFan) begin : fan
+        logic [7:0] NumFans;
+        $display("%t %m: *** Found: Type %04x: FAN #%0d ***", $realtime, blockType, foundFans);
+        NumFans = blockParams[7:0];
+        $display("%t %m: Param: NumFans=%0d", $realtime, NumFans);
+        $display("%t %m: ****************************", $realtime);
+        foundFans++;
+      end
+
       else begin
-        $display("%t %m: Found : Type %04x: UNKNOWN #%0d", $realtime, blockType, foundUnknowns);
+        $display("%t %m:  ***Found : Type %04x: UNKNOWN #%0d ***", $realtime, blockType, foundUnknowns);
         $display("%t %m: ****************************", $realtime);
         foundUnknowns++;
       end

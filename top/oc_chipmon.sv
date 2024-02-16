@@ -35,7 +35,8 @@ module oc_chipmon #(
    input        sda = 1'b1,
    output logic sdaTristate,
    output logic thermalWarning,
-   output logic thermalError
+   output logic thermalError,
+   output logic alertTristate
    );
 
   logic                           resetSync;
@@ -46,21 +47,23 @@ module oc_chipmon #(
 
   // See Xilinx UG580
 
+  // We don't necessarily need CSRs to have ChipMon.  It can be statically programmed to generate
+  // thermalWarning/thermalError.
+
+  localparam integer              NumCsr = 3;
+  logic [0:NumCsr-1] [31:0]       csrOut;
+  logic [0:NumCsr-1] [31:0]       csrIn;
+  localparam integer              CsrAddressControl = 1;
+  localparam integer              CsrAddressStatus = 2;
+
   oclib_pkg::drp_s    drp;
   oclib_pkg::drp_fb_s drpFb;
 
-  localparam integer NumCsr = 3;
-  localparam integer CsrAddressControl = 1;
-  localparam integer CsrAddressStatus = 2;
-  localparam logic [31:0] CsrId = { oclib_pkg::CsrIdChipMon,
-                                    15'd0, InternalReference };
-  logic [0:NumCsr-1] [31:0] csrConfig;
-  logic [0:NumCsr-1] [31:0] csrStatus;
-  logic                     alertTristate;
-
   if (CsrEnable) begin : csr_en
 
-    localparam Spaces = 2;
+    // *** Convert incoming CSR type into two spaces: local csr and a DRP for the ChipMon IP
+
+    localparam integer Spaces = 2;
     localparam type CsrIntType = oclib_pkg::csr_32_s;
     localparam type CsrIntFbType = oclib_pkg::csr_32_fb_s;
     CsrIntType    [Spaces-1:0] csrInt;
@@ -75,7 +78,24 @@ module oc_chipmon #(
                   .in(csr), .inFb(csrFb),
                   .out(csrInt), .outFb(csrIntFb) );
 
-    // Implement address space 0
+    // *** Implement address space 0
+
+    // 0 : CSR ID
+    //   [    0] InternalReference
+    //   [15: 4] ChipMonType
+    //   [31:16] csrId
+    // 1 : Control
+    //   [    0] softReset
+    //   [   28] jtagLocked
+    //   [   29] jtagModified
+    //   [   30] jtagBusy
+    // 2 : Status
+    //   [    0] thermalError
+    //   [31:16] alarm
+
+    localparam logic [11:0] ChipMonType = 12'd2; // SYSMONE4
+    localparam logic [31:0] CsrId = { oclib_pkg::CsrIdChipMon, ChipMonType, 3'd0, InternalReference };
+
     oclib_csr_array #(.CsrType(CsrIntType), .CsrFbType(CsrIntFbType),
                       .NumCsr(NumCsr),
                       .CsrRwBits   ({ 32'h00000000, 32'h00000001, 32'h00000000 }),
@@ -85,9 +105,10 @@ module oc_chipmon #(
     uCSR (.clock(clock), .reset(resetSync),
           .csr(csrInt[0]), .csrFb(csrIntFb[0]),
           .csrRead(), .csrWrite(),
-          .csrConfig(csrConfig), .csrStatus(csrStatus));
+          .csrOut(csrOut), .csrIn(csrIn));
 
-    // Implement address space 1
+    // *** Implement address space 1
+
     oclib_csr_to_drp #(.CsrType(CsrIntType), .CsrFbType(CsrIntFbType))
     uCSR_TO_DRP (.clock(clock), .reset(resetSync),
                  .csr(csrInt[1]), .csrFb(csrIntFb[1]),
@@ -95,11 +116,11 @@ module oc_chipmon #(
 
   end
   else begin // !if (CsrEnable)
-    assign drp.enable = 1'b0;
-    assign drp.address = '0;
-    assign drp.write = 1'b0;
-    assign drp.wdata = '0;
-    assign csrConfig = '0;
+    assign drp = '0;
+    assign csrOut = '0;
+    // we should not be accessing this, i.e. it shouldn't be connected at all, but we could
+    // add oclib_csr_null, which then itself should compile away to nothing if unconnected
+    assign csrFb = '0;
   end // !if (CsrEnable)
 
   logic        softReset;
@@ -129,7 +150,7 @@ module oc_chipmon #(
   localparam logic [15:0] VccBramHighCode = VoltToCode(WarningVccBramHigh);
   localparam logic [15:0] VccBramLowCode = VoltToCode(WarningVccBramLow);
 
-  localparam logic [7:0]  AdcClockDivider = (ClockHz / 4500000); // target 4.5MHz
+  localparam logic [7:0]  AdcClockDivider = (ClockHz / 4_500_000); // target 4.5MHz
 
   wire [4:0]              muxaddr;
   wire [5:0]              channel;
@@ -190,13 +211,15 @@ module oc_chipmon #(
             .JTAGBUSY(jtagBusy)
             );
 
-  assign softReset = csrConfig[CsrAddressControl][0];
+  assign softReset = csrOut[CsrAddressControl][0];
+  assign csrIn[CsrAddressControl][28] = jtagLocked;
+  assign csrIn[CsrAddressControl][29] = jtagModified;
+  assign csrIn[CsrAddressControl][30] = jtagBusy;
+
   // these are actually available via DRP, so maybe CsrAddressStatus should go away?
-  assign csrStatus[CsrAddressStatus][0] = thermalError;
-  assign csrStatus[CsrAddressStatus][31:16] = alarm;
-  assign csrStatus[CsrAddressControl][28] = jtagLocked;
-  assign csrStatus[CsrAddressControl][29] = jtagModified;
-  assign csrStatus[CsrAddressControl][30] = jtagBusy;
+  assign csrIn[CsrAddressStatus][0] = thermalError;
+  assign csrIn[CsrAddressStatus][31:16] = alarm;
+
   assign thermalWarning = alarm[0];
 
   `ifdef OC_CHIPMON_INCLUDE_ILA_DEBUG
@@ -216,16 +239,50 @@ module oc_chipmon #(
 
   // BEHAVIORAL IMPLEMENTATION
 
-  // Note this implementation provides only the most basic functionality (i.e. legal behavior at outputs). It doesn't
-  // implement any CSRs.  The indended use for this mode is bringing up a design in a vendor-neutral fashion, without
-  // requiring any vendor libraries (i.e. just generic SystemVerilog simulation).
+  // Note this implementation provides only the most basic functionality (i.e. legal behavior at outputs).
+  // If CsrEnable is set, we instantiate a basic ID for enumeration.
 
-  assign csrFb = '0;
   assign sclTristate = 1'b1;
   assign sdaTristate = 1'b1;
   assign alertTristate = 1'b1;
   assign thermalWarning = 1'b0;
   assign thermalError = 1'b0;
+
+  // *** Implement address space 0
+
+  if (CsrEnable) begin : csr_en
+
+    // 0 : CSR ID
+    //   [15: 4] ChipMonType
+    //   [31:16] csrId
+    localparam integer NumCsr = 1;
+
+    localparam logic [11:0] ChipMonType = 12'd1; // NULL IMPLEMENTATION
+    localparam logic [31:0] CsrId = { oclib_pkg::CsrIdChipMon,
+                                      ChipMonType, 4'd0 };
+
+    logic [0:NumCsr-1] [31:0] csrOut;
+    logic [0:NumCsr-1] [31:0] csrIn;
+
+    oclib_csr_array #(.CsrType(CsrType), .CsrFbType(CsrFbType), .CsrProtocol(CsrProtocol),
+                      .NumCsr(NumCsr),
+                      .CsrRwBits   ({ 32'h00000000 }),
+                      .CsrRoBits   ({ 32'h00000000 }),
+                      .CsrFixedBits({ 32'hffffffff }),
+                      .CsrInitBits ({        CsrId }))
+    uCSR (.clock(clock), .reset(resetSync),
+          .csr(csr), .csrFb(csrFb),
+          .csrRead(), .csrWrite(),
+          .csrOut(csrOut), .csrIn(csrIn));
+
+    assign csrIn[0] = '0;
+
+  end
+  else begin // !if (CsrEnable)
+    // we should not be accessing this, i.e. it shouldn't be connected at all, but we could
+    // add oclib_csr_null, which then itself should compile away to nothing if unconnected
+    assign csrFb = '0;
+  end // !if (CsrEnable)
 
 `endif // !`ifdef OC_LIBRARY_ULTRASCALE_PLUS
 

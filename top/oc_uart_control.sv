@@ -28,9 +28,9 @@ module oc_uart_control
     parameter logic [0:3] [7:0]  BuildUuid2 = `OC_VAL_ASDEFINED_ELSE(OC_BUILD_UUID2, 32'd0),
     parameter logic [0:3] [7:0]  BuildUuid3 = `OC_VAL_ASDEFINED_ELSE(OC_BUILD_UUID3, 32'd0),
     parameter logic [0:15] [7:0] BuildUuid = `OC_VAL_ASDEFINED_ELSE(OC_BUILD_UUID, {BuildUuid0,BuildUuid1,BuildUuid2,BuildUuid3}),
-    parameter logic [0:1] [7:0]  TargetVendor = `OC_VAL_ASDEFINED_ELSE(OC_VENDOR, 16'hffff),
-    parameter logic [0:1] [7:0]  TargetBoard = `OC_VAL_ASDEFINED_ELSE(OC_BOARD, 16'hffff),
-    parameter logic [0:1] [7:0]  TargetLibrary = `OC_VAL_ASDEFINED_ELSE(OC_LIBRARY, 16'hffff),
+    parameter logic [0:1] [7:0]  VendorID = `OC_VAL_ASDEFINED_ELSE(OC_VENDOR, 16'hffff),
+    parameter logic [0:1] [7:0]  BoardID = `OC_VAL_ASDEFINED_ELSE(OC_BOARD, 16'hffff),
+    parameter logic [0:1] [7:0]  LibraryID = `OC_VAL_ASDEFINED_ELSE(OC_LIBRARY, 16'hffff),
     parameter logic [7:0]        BlockProtocol = $bits(oclib_pkg::csr_32_s),
     parameter logic [0:15] [7:0] UserSpace = `OC_VAL_ASDEFINED_ELSE(USER_APP_STRING, "none            ")
     )
@@ -144,12 +144,12 @@ module oc_uart_control
       6'h0b   : infoRomData = BuildDate[3];
       6'h0c   : infoRomData = BuildTime[0];
       6'h0d   : infoRomData = BuildTime[1];
-      6'h0e   : infoRomData = TargetVendor[0];
-      6'h0f   : infoRomData = TargetVendor[1];
-      6'h10   : infoRomData = TargetLibrary[0];
-      6'h11   : infoRomData = TargetLibrary[1];
-      6'h12   : infoRomData = TargetBoard[0];
-      6'h13   : infoRomData = TargetBoard[1];
+      6'h0e   : infoRomData = VendorID[0];
+      6'h0f   : infoRomData = VendorID[1];
+      6'h10   : infoRomData = LibraryID[0];
+      6'h11   : infoRomData = LibraryID[1];
+      6'h12   : infoRomData = BoardID[0];
+      6'h13   : infoRomData = BoardID[1];
       6'h14   : infoRomData = BlockTopCount[0];
       6'h15   : infoRomData = BlockTopCount[1];
       6'h16   : infoRomData = BlockUserCount[0];

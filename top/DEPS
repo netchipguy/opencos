@@ -4,7 +4,10 @@ oc_cos:
         oc_uart_control
         oc_chip_status
         oc_chipmon
+        oc_iic
         oc_led
+        oc_gpio
+        oc_fan
         ../lib/oclib_reset
         ../lib/oclib_csr_tree_splitter
 
@@ -17,7 +20,31 @@ oc_chip_status:
         oc_chip_status.sv
         ../lib/oclib_synchronizer
 
+oc_chipmon:
+        oc_chipmon.sv
+        ../lib/oclib_module_reset
+        ../lib/oclib_csr_adapter
+        ../lib/oclib_csr_array
+
+oc_iic:
+        oc_iic.sv
+        ../lib/oclib_module_reset
+        ../lib/oclib_csr_adapter
+        ../lib/oclib_csr_array
+
 oc_led:
         oc_led.sv
         ../lib/oclib_module_reset
+        ../lib/oclib_csr_array
+
+oc_gpio:
+        oc_gpio.sv
+        ../lib/oclib_module_reset
+        ../lib/oclib_synchronizer
+        ../lib/oclib_csr_array
+
+oc_fan:
+        oc_fan.sv
+        ../lib/oclib_module_reset
+        ../lib/oclib_debounce
         ../lib/oclib_csr_array

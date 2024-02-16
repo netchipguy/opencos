@@ -200,7 +200,7 @@ class CommandDesign(Command):
             self.defines[m.group(1)] = None
             util.debug(f"Defined {m.group(1)}")
             return
-        m = re.match(r'^\+define\+(\w+)\=(\w+)$', plusarg)
+        m = re.match(r'^\+define\+(\w+)\=(\S+)$', plusarg)
         if m:
             self.defines[m.group(1)] = m.group(2)
             util.debug(f"Defined {m.group(1)}={m.group(2)}")
@@ -1379,6 +1379,7 @@ class CommandUploadVivado(CommandUpload, ToolVivado):
             print(f"program_hw_devices [current_hw_device]", file=fo)
             if self.args['gui']:
                 print(f"refresh_hw_device [current_hw_device]", file=fo)
+                print(f"display_hw_ila_data [ get_hw_ila_data hw_ila_data_1 -of_objects [get_hw_ilas] ]", file=fo)
             else:
                 print(f"close_hw_target", file=fo)
                 print(f"exit", file=fo)

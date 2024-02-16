@@ -22,11 +22,11 @@ module oclib_csr_array
     parameter integer                      OutputFlops = 0,
 
     // From here down we are configuring per-CSR operation
-    parameter bit [0:NumCsr-1] [DataW-1:0] CsrFixedBits = '0, // set are 1 in csrConfig and readData
-    parameter bit [0:NumCsr-1] [DataW-1:0] CsrInitBits = '0, // reset to 1 in csrConfig (should also be CsrRw or CsrFixed)
+    parameter bit [0:NumCsr-1] [DataW-1:0] CsrFixedBits = '0, // set are 1 in csrOut and readData
+    parameter bit [0:NumCsr-1] [DataW-1:0] CsrInitBits = '0, // reset to 1 in csrOut (should also be CsrRw or CsrFixed)
     parameter bit [0:NumCsr-1] [DataW-1:0] CsrRwBits = '0, // writable and appear in readData
-    parameter bit [0:NumCsr-1] [DataW-1:0] CsrRoBits = '0, // read-only, readData from csrStatus
-    parameter bit [0:NumCsr-1] [DataW-1:0] CsrWoBits = '0, // write-only, go to csrConfig but not readData
+    parameter bit [0:NumCsr-1] [DataW-1:0] CsrRoBits = '0, // read-only, readData from csrIn
+    parameter bit [0:NumCsr-1] [DataW-1:0] CsrWoBits = '0, // write-only, go to csrOut but not readData
 
     // The following per-CSR config is about synch/pipelining per CSR, defaulting to global setting above
     parameter integer                      CsrStatusInputFlops [0:NumCsr-1] = '{ NumCsr { InputFlops }},
@@ -40,8 +40,8 @@ module oclib_csr_array
    input                                 csrSelect = 1'b1,
    input                                 CsrType csr,
    output                                CsrFbType csrFb,
-   output logic [0:NumCsr-1] [DataW-1:0] csrConfig,
-   input [0:NumCsr-1] [DataW-1:0]        csrStatus,
+   output logic [0:NumCsr-1] [DataW-1:0] csrOut,
+   input [0:NumCsr-1] [DataW-1:0]        csrIn,
    output logic [0:NumCsr-1]             csrRead,
    output logic [0:NumCsr-1]             csrWrite,
    input                                 clockCsrConfig = 1'b0
@@ -73,21 +73,21 @@ module oclib_csr_array
   localparam integer                     CsrAddressShift = $clog2(CsrAlignment);
   localparam integer                     LocalCsrAddressWidth = $bits(csrNormal.address) - CsrAddressShift;
 
-  // synch then pipe the incoming csrStatus, as per CsrStatusInputAsync and CsrStatusInputFlops
+  // synch then pipe the incoming csrIn, as per CsrStatusInputAsync and CsrStatusInputFlops
   logic [0:NumCsr-1] [DataW-1:0]         csrStatusSync;
   logic [0:NumCsr-1] [DataW-1:0]         csrStatusInternal;
 
   for (genvar i=0; i<NumCsr; i++) begin : status_pipe
 
     oclib_synchronizer #(.Width(DataW), .Enable(CsrStatusInputAsync[i]))
-    uSYNC (.clock(clock), .in(csrStatus[i]), .out(csrStatusSync[i]));
+    uSYNC (.clock(clock), .in(csrIn[i]), .out(csrStatusSync[i]));
 
     oclib_pipeline #(.Width(DataW), .Length(CsrStatusInputFlops[i]), .NoShiftRegister(oclib_pkg::True))
     uPIPE (.clock(clock), .in(csrStatusSync[i]), .out(csrStatusInternal[i]));
 
   end
 
-  // pipe then synch the outgoing csrConfig, as per CsrConfigOutputAsync and CsrConfigOutputFlops
+  // pipe then synch the outgoing csrOut, as per CsrConfigOutputAsync and CsrConfigOutputFlops
   logic [0:NumCsr-1] [DataW-1:0]         csrConfigInternal;
   logic [0:NumCsr-1] [DataW-1:0]         csrConfigPipe;
   for (genvar i=0; i<NumCsr; i++) begin : config_pipe
@@ -96,7 +96,7 @@ module oclib_csr_array
     uPIPE (.clock(clock), .in(csrConfigInternal[i]), .out(csrConfigPipe[i]));
 
     oclib_synchronizer #(.Width(DataW), .Enable(CsrConfigOutputAsync[i]))
-    uSYNC (.clock(clockCsrConfig), .in(csrConfigPipe[i]), .out(csrConfig[i]));
+    uSYNC (.clock(clockCsrConfig), .in(csrConfigPipe[i]), .out(csrOut[i]));
 
   end
 

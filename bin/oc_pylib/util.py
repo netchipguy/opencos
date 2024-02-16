@@ -13,7 +13,7 @@ progname = "UNKNOWN"
 progname_in_message = True
 logfile = None
 loglast = 0
-debug_level = 1
+debug_level = 0
 
 args = {
     'color' : True,
@@ -84,10 +84,14 @@ def process_token(arg):
     elif arg == '--no-quiet': args['quiet'] = False
     elif arg == '--verbose': args['verbose'] = True
     elif arg == '--no-verbose': args['verbose'] = False
-    elif arg == '--debug': args['debug'] = True
-    elif arg == '--no-debug': args['debug'] = False
     elif arg == '--fancy': args['fancy'] = True
     elif arg == '--no-fancy': args['fancy'] = False
+    elif arg == '--debug':
+        args['debug'] = True
+        debug_level += 1
+    elif arg == '--no-debug':
+        args['debug'] = False
+        debug_level = 0
     elif arg == '--logfile':
         logfile_is_next_arg = True
     elif arg == '--force-logfile':

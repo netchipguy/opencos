@@ -103,8 +103,8 @@ module oc_uart_control_test;
 
   localparam integer              NumCsr = 4;
   localparam integer              DataW = 32;
-  logic [0:NumCsr-1] [DataW-1:0]  csrConfig;
-  logic [0:NumCsr-1] [DataW-1:0]  csrStatus;
+  logic [0:NumCsr-1] [DataW-1:0]  csrOut;
+  logic [0:NumCsr-1] [DataW-1:0]  csrIn;
   logic [0:NumCsr-1]              csrRead;
   logic [0:NumCsr-1]              csrWrite;
   oclib_csr_array #(.NumCsr(NumCsr), //    0              1              2              3   <-- CSR #s
@@ -115,10 +115,10 @@ module oc_uart_control_test;
                     .CsrWoBits   ( { 32'h0000_0000, 32'h0000_0000, 32'h0f00_0000, 32'h0000_0000 } )  )
   uCSR_ARRAY (.clock(clock), .reset(reset), .clockCsrConfig(),
               .csr(csr[0]), .csrFb(csrFb[0]),
-              .csrConfig(csrConfig), .csrStatus(csrStatus),
+              .csrOut(csrOut), .csrIn(csrIn),
               .csrRead(csrRead), .csrWrite(csrWrite)  );
 
-  initial csrStatus = '0;
+  initial csrIn = '0;
 
  `else // !  OC_UART_CONTROL_CPU_TREE_TEST
 
@@ -301,6 +301,9 @@ module oc_uart_control_test;
 
  `ifdef OC_UART_CONTROL_CPU_TREE_TEST
 
+  string csrModuleName;
+  initial csrModuleName = $sformatf("%m.CSR");
+
   task CsrReadCheck(input [31:0] address, input [31:0] data);
 
     CsrTopType csr;
@@ -310,7 +313,7 @@ module oc_uart_control_test;
     logic [0:RequestBytes-1] [7:0] payloadRequest;
     logic [0:ResponseBytes-1] [7:0] payloadResponse;
 
-    $display("%t %m: *** Expecting [%08x] => %08x", $realtime, address, data);
+    $display("%t %s: Expect %08x <= [%08x]", $realtime, csrModuleName, data, address);
     csr = '0;
     csr.read = 1;
     csr.address = address;
@@ -326,6 +329,7 @@ module oc_uart_control_test;
     csrFb.rdata = data;
     payloadResponse = csrFb;
     for (int i=0; i<ResponseBytes; i++) uCONTROL_UART.ReceiveCheck(payloadResponse[i]);
+    $display("%t %s:        %08x <= [%08x] (OK, Match)", $realtime, csrModuleName, data, address);
     uCONTROL_UART.WaitForIdle();
     uCONTROL_UART.SendEnter();
     TestExpectPrompt();
@@ -340,7 +344,7 @@ module oc_uart_control_test;
     logic [0:RequestBytes-1] [7:0] payloadRequest;
     logic [0:ResponseBytes-1] [7:0] payloadResponse;
 
-    $display("%t %m: *** Writing   [%08x] <= %08x", $realtime, address, data);
+    $display("%t %s: Write  %08x => [%08x]", $realtime, csrModuleName, data, address);
     csr = '0;
     csr.write = 1;
     csr.address = address;
@@ -356,6 +360,7 @@ module oc_uart_control_test;
     csrFb.rdata = '0;
     payloadResponse = csrFb;
     for (int i=0; i<ResponseBytes; i++) uCONTROL_UART.ReceiveCheck(payloadResponse[i]);
+    $display("%t %s:        %08x => [%08x] (OK)", $realtime, csrModuleName, data, address);
     uCONTROL_UART.WaitForIdle();
     uCONTROL_UART.SendEnter();
     TestExpectPrompt();
@@ -373,12 +378,12 @@ module oc_uart_control_test;
     // play with CSR 0
     CsrReadCheck(.address('h0000), .data('h0000_0000));
     CsrWrite    (.address('h0000), .data('h1234_5678));
-    csrStatus[0] = 'h55aa_1234;
+    csrIn[0] = 'h55aa_1234;
     CsrReadCheck(.address('h0000), .data('h55aa1234));
 
     // play with CSR 1
     CsrReadCheck(.address('h0004), .data('h0000_0000));
-    csrStatus[1] = 'h55aa_1234;
+    csrIn[1] = 'h55aa_1234;
     CsrWrite    (.address('h0004), .data('h8765_4321));
     CsrReadCheck(.address('h0004), .data('h8765_4321));
 
@@ -386,7 +391,7 @@ module oc_uart_control_test;
     CsrReadCheck(.address('h0008), .data('h0012_abcd));
     CsrWrite    (.address('h0008), .data('h1234_5678));
     CsrReadCheck(.address('h0008), .data('h1012_5678));
-    `OC_ASSERT(csrConfig[2][27:24] == 4'h2); // write-only bits in second nibble from left
+    `OC_ASSERT(csrOut[2][27:24] == 4'h2); // write-only bits in second nibble from left
 
     TestExpectIdle();
   endtask // TestMessage

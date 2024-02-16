@@ -42,7 +42,11 @@ if { [oc_is_run impl] } {
     set_property -quiet -dict { DRIVE 8 SLEW SLOW } [get_ports STATUS_LED*_FPGA]
 
     set_property -quiet -dict { DRIVE 8 } [get_ports QSFP0_* -filter {DIRECTION == OUT}]
+    set_property -quiet -dict { DRIVE 8 } [get_ports QSFP0_* -filter {DIRECTION == INOUT}]
     set_property -quiet -dict { DRIVE 8 } [get_ports QSFP1_* -filter {DIRECTION == OUT}]
+    set_property -quiet -dict { DRIVE 8 } [get_ports QSFP1_* -filter {DIRECTION == INOUT}]
+
+    puts "OC_BOARD_CONSTRAINTS.TCL: Done fixing up vendor provided implementation constraints"
 }
 
 
@@ -60,6 +64,7 @@ if { [oc_is_run impl] } {
     } else {
         puts "OC_BOARD_CONSTRAINTS.TCL: ERROR: couldn't find top clock for debug (tried clockRef and clockRef[0]) !!!"
     }
+    puts "OC_BOARD_CONSTRAINTS.TCL: Done setting up DBG_HUB"
 }
 
 puts "OC_BOARD_CONSTRAINTS.TCL: Done"
