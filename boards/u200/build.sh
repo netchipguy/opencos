@@ -17,17 +17,21 @@ python3 ../../bin/eda flist oc_chip_top --out "./build.flist" --force \
     +define+OC_LIBRARY=1 \
     +define+OC_LIBRARY_XILINX \
     +define+OC_LIBRARY_ULTRASCALE_PLUS \
-    +define+OC_BOARD_TOP_DEBUG \
-    +define+OC_UART_CONTROL_INCLUDE_VIO_DEBUG \
-    +define+OC_UART_CONTROL_INCLUDE_ILA_DEBUG \
-    +define+OC_IIC_INCLUDE_ILA_DEBUG \
     +define+OC_BOARD_IIC_OFFLOAD_ENABLE \
+    +define+OC_TARGET_PROTECT_COUNT=1 \
+    +define+OC_TARGET_DUMMY_COUNT=1 \
+    +define+OC_UART_CONTROL_INCLUDE_ILA_DEBUG \
+    +define+OC_PROTECT_INCLUDE_ILA_DEBUG \
     --no-emit-incdir \
     --no-quote-define \
     --prefix-define "oc_set_project_define " \
     --prefix-sv "add_files -norecurse " \
     --prefix-v "add_files -norecurse " \
     --prefix-vhd "add_files -norecurse "
+
+    # +define+OC_UART_CONTROL_INCLUDE_VIO_DEBUG \
+    # +define+OC_BOARD_TOP_DEBUG \
+    # +define+OC_IIC_INCLUDE_ILA_DEBUG \
 
 # Call Vivado to execute the TCL part of the script
 

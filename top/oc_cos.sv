@@ -124,8 +124,18 @@ module oc_cos
   // *** INTERNAL FEATUERS ***
 
   // *** PROTECT ***
-  parameter integer                    ProtectCount = `OC_VAL_ASDEFINED_ELSE(TARGET_PROTECT_COUNT,0);
+  parameter integer                    ProtectCount = `OC_VAL_ASDEFINED_ELSE(OC_TARGET_PROTECT_COUNT,0);
   `OC_LOCALPARAM_SAFE(ProtectCount);
+  logic [ProtectCountSafe-1:0] protectUnlocked;
+
+  // *** DUMMY ***
+  parameter integer                    DummyCount = `OC_VAL_ASDEFINED_ELSE(OC_TARGET_DUMMY_COUNT,0);
+  `OC_LOCALPARAM_SAFE(DummyCount);
+  parameter integer                    DummyDatapathCount = `OC_VAL_ASDEFINED_ELSE(OC_TARGET_DUMMY_DATAPATH_COUNT,1);
+  parameter integer                    DummyDatapathWidth = `OC_VAL_ASDEFINED_ELSE(OC_TARGET_DUMMY_DATAPATH_WIDTH,32);
+  parameter integer                    DummyDatapathLogicLevels = `OC_VAL_ASDEFINED_ELSE(OC_TARGET_DUMMY_DATAPATH_LOGIC_LEVELS,8);
+  parameter integer                    DummyDatapathPipeStages = `OC_VAL_ASDEFINED_ELSE(OC_TARGET_DUMMY_DATAPATH_PIPE_STAGES,8);
+  parameter integer                    DummyDatapathLutInputs = `OC_VAL_ASDEFINED_ELSE(OC_TARGET_DUMMY_DATAPATH_LUT_INPUTS,4);
 
   // *******************************************************************************
   // *** RESOURCE CALCULATIONS ***
@@ -136,7 +146,8 @@ module oc_cos
   localparam integer             BlockFirstGpio = (BlockFirstLed + (LedCount ? 1 : 0)); // all LEDs are on one IP
   localparam integer             BlockFirstFan = (BlockFirstGpio + (GpioCount ? 1 : 0)); // all GPIOs are on one IP
   localparam integer             BlockFirstProtect = (BlockFirstFan + (FanCount ? 1 : 0)); // all FANs are on one IP
-  localparam integer             BlockTopCount = (BlockFirstProtect + ProtectCount);
+  localparam integer             BlockFirstDummy = (BlockFirstProtect + ProtectCount);
+  localparam integer             BlockTopCount = (BlockFirstDummy + DummyCount);
   localparam integer             BlockUserCount = 0;
   localparam integer             BlockCount = (BlockTopCount + BlockUserCount);
   `OC_LOCALPARAM_SAFE(BlockCount);
@@ -296,6 +307,31 @@ module oc_cos
   end
   else begin
     assign fanPwm = '0;
+  end
+
+  // *******************************************************************************
+  // *** PROTECT ***
+
+  for (genvar i=0; i<ProtectCount; i++) begin : protect
+    oc_protect #(.ClockHz(ClockTopHz),
+                 .CsrType(CsrTopType), .CsrFbType(CsrTopFbType), .CsrProtocol(CsrTopProtocol),
+                 .ResetSync(oclib_pkg::False), .ResetPipeline(DefaultTopResetPipeline))
+    uPROTECT (.clock(clockTop), .reset(resetTop),
+              .csr(csrTop[BlockFirstProtect+i]), .csrFb(csrTopFb[BlockFirstProtect+i]),
+              .unlocked(protectUnlocked[i]));
+  end
+
+  // *******************************************************************************
+  // *** DUMMY ***
+
+  for (genvar i=0; i<DummyCount; i++) begin : dummy
+    oc_dummy #(.DatapathCount(DummyDatapathCount), .DatapathWidth(DummyDatapathWidth),
+               .DatapathLogicLevels(DummyDatapathLogicLevels), .DatapathPipeStages(DummyDatapathPipeStages),
+               .DatapathLutInputs(DummyDatapathLutInputs),
+               .CsrType(CsrTopType), .CsrFbType(CsrTopFbType), .CsrProtocol(CsrTopProtocol),
+               .ResetSync(oclib_pkg::False), .ResetPipeline(DefaultTopResetPipeline))
+    uDUMMY (.clock(clockTop), .reset(resetTop),
+            .csr(csrTop[BlockFirstDummy+i]), .csrFb(csrTopFb[BlockFirstDummy+i]));
   end
 
   // *******************************************************************************

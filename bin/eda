@@ -1319,6 +1319,7 @@ class CommandProjVivado(CommandProj, ToolVivado):
         command_list = [ 'vivado', '-mode', 'gui', '-source', tcl_file, '-log', f"{self.args['top']}.proj.log" ]
         if not util.args['verbose']: command_list.append('-notrace')
         self.exec(self.args['work-dir'], command_list)
+        util.info(f"Synthesis done, results are in: {self.args['work-dir']}")
 
 class CommandUploadVivado(CommandUpload, ToolVivado):
     def __init__(self, config):

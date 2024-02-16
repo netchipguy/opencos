@@ -18,6 +18,26 @@ import oc_pylib.util as util # our own library of helpers
 util.progname_in_message = False # too noise for this use case
 
 # **************************************************************
+# **** Readline related
+
+try:
+    import readline
+    got_readline = 1
+except:
+    got_readline = 0
+    pass
+
+
+if got_readline:
+    histfile = os.path.join(os.path.expanduser("~"), ".oc_cli_history")
+    try:
+        readline.read_history_file(histfile)
+        readline.set_history_length(1000)
+    except FileNotFoundError:
+        pass
+
+
+# **************************************************************
 # **** Global vars
 
 global_vars = {}
@@ -38,43 +58,43 @@ def eval_true(text):
 def eval_number(text, ishex=False, check_uint_bits=False, check_int_min=False, check_int_max=False):
     # if we've been given an int already, set the value to that
     if isinstance(text, int):
-      value = text
+        value = text
     else:
-      mult = 1
-      # do variable substitution
-      text = apply_global_vars(text)
-      # look for a prefix for human friendly number, note these suffixes work on hex numbers too
-      m = re.match(r'^(.*)[Kk]$', text)
-      if m:
-        mult = 1024
-        text = m.group(1)
-      m = re.match(r'^(.*)[Mm]$', text)
-      if m:
-        mult = 1024*1024
-        text = m.group(1)
-      m = re.match(r'^(.*)[Gg]$', text)
-      if m:
-        mult = 1024*1024*1024
-        text = m.group(1)
-      # substition is done, multiplier is extracted, time to look for a number
-      value = False
-      if not ishex: # if we've been told it's hex, we don't do this match, because hex can look decimal
-        m = re.match(r'^(\d+)$', text)
-        if m: value = int(m.group(1)) * mult
-      if (type(value) != int):
-        m = re.match(r'^0x([\da-fA-F]+)$', text) # if it's starts with 0x, then it's hex
-        if m: value = int(m.group(1), 16) * mult
-      if (type(value) != int):
-        m = re.match(r'^([\da-fA-F]+)$', text) # if it has a-f, then it's hex
-        if m: value = int(m.group(1), 16) * mult
-    # if we don't have value as an int by here, we are out of ideas
-    if (type(value) != int):
-        util.error(f"Expected a number, got '{text}'", do_exit=False)
-        raise HandledError
+        mult = 1
+        # do variable substitution
+        text = apply_global_vars(text)
+        # look for a prefix for human friendly number, note these suffixes work on hex numbers too
+        m = re.match(r'^(.*)[Kk]$', text)
+        if m:
+            mult = 1024
+            text = m.group(1)
+        m = re.match(r'^(.*)[Mm]$', text)
+        if m:
+            mult = 1024*1024
+            text = m.group(1)
+        m = re.match(r'^(.*)[Gg]$', text)
+        if m:
+            mult = 1024*1024*1024
+            text = m.group(1)
+        # substition is done, multiplier is extracted, time to look for a number
+        value = False
+        if not ishex: # if we've been told it's hex, we don't do this match, because hex can look decimal
+            m = re.match(r'^(\d+)$', text)
+            if m: value = int(m.group(1)) * mult
+        if (type(value) != int):
+            m = re.match(r'^0x([\da-fA-F]+)$', text) # if it's starts with 0x, then it's hex
+            if m: value = int(m.group(1), 16) * mult
+        if (type(value) != int):
+            m = re.match(r'^([\da-fA-F]+)$', text) # if it has a-f, then it's hex
+            if m: value = int(m.group(1), 16) * mult
+        # if we don't have value as an int by here, we are out of ideas
+        if (type(value) != int):
+            util.error(f"Expected a number, got '{text}'", do_exit=False)
+            raise HandledError
     # if we're given a number of uint bits to check, convert to int min/max
     if (type(check_uint_bits) == int):
-      check_int_min = 0
-      check_int_max = (1 << check_uint_bits)-1
+        check_int_min = 0
+        check_int_max = (1 << check_uint_bits)-1
     # check value is within int min/max
     if (type(check_int_min) == int):
         if (value < check_int_min):
@@ -91,26 +111,6 @@ def eval_regex(regex, text):
     text = apply_global_vars(text)
     m = re.match(regex, text)
     return m
-
-# **************************************************************
-# **** Readline related
-
-try:
-  import readline
-  got_readline = 1
-except:
-  got_readline = 0
-  pass
-
-
-if got_readline:
-    histfile = os.path.join(os.path.expanduser("~"), ".oc_cli_history")
-    try:
-        readline.read_history_file(histfile)
-        readline.set_history_length(1000)
-    except FileNotFoundError:
-        pass
-
 
 # **************************************************************
 # **** Serial-Over-Tcp
@@ -155,6 +155,49 @@ class FakeSerial:
     def out_waiting(self):
         return 0
 
+
+# **************************************************************
+# **** XXTEA for Protection
+
+# ported from https://en.wikipedia.org/wiki/XXTEA
+
+def btea (vin, n, key):
+    v = vin
+    DELTA = 0x9e3779b9
+    if (n > 1): # Encoding part
+        rounds = int(6 + 52/n)
+        s = 0
+        z = v[n-1]
+        while rounds:
+            s = (s + DELTA) & 0xffffffff
+            e = (s >> 2) & 3;
+            for p in range(n-1):
+                y = v[p+1]
+                v[p] = (v[p] + (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((s^y) + (key[(p&3)^e] ^ z)))) & 0xffffffff
+                z = v[p]
+            p = n-1
+            y = v[0]
+            v[n-1] = (v[n-1] + (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((s^y) + (key[(p&3)^e] ^ z)))) & 0xffffffff
+            z = v[n-1]
+            rounds -= 1
+    elif (n < -1): # Decoding part
+        n = -n
+        rounds = int(6 + 52/n)
+        s = (rounds * DELTA) & 0xffffffff
+        y = v[0]
+        while rounds:
+            e = (s >> 2) & 3
+            for p in range(n-1, 0, -1):
+                z = v[p-1]
+                v[p] = (v[p] - (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((s^y) + (key[(p&3)^e] ^ z)))) & 0xffffffff
+                y = v[p]
+            p = 0
+            z = v[n-1]
+            v[0] = (v[0] - (((z>>5^y<<2) + (y>>3^z<<4)) ^ ((s^y) + (key[(p&3)^e] ^ z)))) & 0xffffffff
+            y = v[0]
+            s = (s - DELTA) & 0xffffffff
+            rounds -= 1
+    return v
 
 # **************************************************************
 # **** Blocks
@@ -444,6 +487,7 @@ class BlockLED(Block):
                 for i in range(self.numled): self.csr_write32(0, 8 + (  i*4), ((blinks<<16) | (bright<<8) | command) )
             else:                            self.csr_write32(0, 8 + (led*4), ((blinks<<16) | (bright<<8) | command) )
 
+
 class BlockIIC(Block):
     def __init__(self, channel, blockid):
         Block.__init__(self, channel, blockid, "IIC")
@@ -476,6 +520,7 @@ class BlockIIC(Block):
                                               [7,7,"SDA_IN"], [5,5,"SDA_TRISTATE"], [4,4,"SDA_MANUAL"],
                                               [3,3,"SCL_IN"], [1,1,"SCL_TRISTATE"], [0,0,"SCL_MANUAL"] ])
 
+
 class BlockGPIO(Block):
     def __init__(self, channel, blockid):
         Block.__init__(self, channel, blockid, "GPIO")
@@ -504,10 +549,140 @@ class BlockGPIO(Block):
         self.info(f"Dumping {self}:")
         data = self.dump_reg(0, 0x0000, "OcID", [ [31,16,"ID"], [7,0,"GPIO_COUNT"] ])
 
+        
+class BlockProtect(Block):
+    def __init__(self, channel, blockid):
+        Block.__init__(self, channel, blockid, "Protect")
+
+    def connect(self):
+        Block.connect(self)
+        data = self.csr_read32(0, 0)
+        self.csrid = ((data >> 16) & 0xffff)
+        self.skeleton_key = ((data>>0) & 0x1)
+        self.timed_license = ((data>>1) & 0x1)
+        self.paranoia = ((data>>2) & 0x1)
+        util.debug(f"Connect: {self} CsrId={self.csrid} SkeletonKey={self.skeleton_key},TimedLicense={self.timed_license},Paranoia={self.paranoia}")
+
+    def command_show(self, parts=[], help_line=False):
+        if help_line: return "Shows high level status of the block in human readable form";
+        util.debug(f"{self}: Features: SkeletonKey={self.skeleton_key},TimedLicense={self.timed_license},Paranoia={self.paranoia}")
+        data = self.csr_read32(0, 4)
+        util.info(f"State: "+
+                  ("Unlocked " if ((data>>31)&1) else "") +
+                  ("Timed Unlock " if ((data>>30)&1) else "") +
+                  ("Decryption Done " if ((data>>29)&1) else ""))
+        fpga_serial = self.csr_read32(0, 8)
+        bitstream_id= self.csr_read32(0, 12)
+        util.info(f"FPGA Serial #: {fpga_serial:08x}, Bitstream ID: {bitstream_id:08x}")
+
+    def command_dump(self, parts=[], help_line=False):
+        if help_line: return "Dumps detailed config/status info of the block in human readable form";
+        self.info(f"Dumping {self}:")
+        data = self.dump_reg(0, 0x0000, "OcID", [ [31,16,"ID"], [2,2,"ENABLE_PARANOIA"], [1,1,"ENABLE_TIMED_LICENSE"], [0,0,"ENABLE_SKELETON_KEY"] ])
+        self.dump_reg(0, 0x0004, "Control", [ [31,31,"UNLOCKED"], [30,30,"TIMED_UNLOCK"], [29,29,"DECRYPT_DONE"], [0,0,"DECRYPT_GO"] ])
+        self.dump_reg(0, 0x0008, "License0")
+        self.dump_reg(0, 0x000c, "License1")
+        self.dump_reg(0, 0x0010, "FpgaSerial")
+        self.dump_reg(0, 0x0014, "BitstreamID")
+        self.dump_reg(0, 0x0018, "Plaintext0")
+        self.dump_reg(0, 0x001c, "Plaintext1")
+
+    def command_unlock(self, parts=[], help_line=False):
+        if help_line: return "Unlocks the protected device, requires a license, given as two arguments (8-digit hex each)";
+        if len(parts) != 2:
+            util.error(f"Need two arguments for 'unlock'", do_exit=False)
+            raise HandledError
+        lic = [ eval_number(parts.pop(0), ishex=True),
+                eval_number(parts.pop(0), ishex=True) ]
+        self.csr_write32(0, 0x08, lic[0])
+        self.csr_write32(0, 0x0c, lic[1])
+        self.csr_write32(0, 0x04, 0x00000001)
+        data = self.csr_read32(0, 0x04)
+        if ((data>>31)&1):   util.info("License valid, FPGA unlocked")
+        elif ((data>>30)&1): util.info("Demo license valid, FPGA enabled for licensed period")
+        elif ((data>>29)&1): util.warning("FAIL -- key was loaded but not accepted")
+        elif ((data>>0)&1):  util.warning("FAIL -- set the 'go' bit but decryption never finished?")
+        else:                util.warning("FAIL -- unable to set the 'go' bit?")
+
+class BlockDummy(Block):
+    def __init__(self, channel, blockid):
+        Block.__init__(self, channel, blockid, "Dummy")
+
+    def connect(self):
+        Block.connect(self)
+        data = self.csr_read32(0, 0)
+        self.csrid = ((data >> 16) & 0xffff)
+        self.datapath_count = ((data>>0) & 0xff)
+        util.debug(f"Connect: {self} CsrId={self.csrid} DatapathCount={self.datapath_count}")
+
+    def command_show(self, parts=[], help_line=False):
+        if help_line: return "Shows high level status of the block in human readable form";
+        util.debug(f"{self}: Features: DatapathCount={self.datapath_count}")
+        data = self.csr_read32(0, 0x04)
+        util.info(f"State: "+
+                  ("Done " if ((data>>31)&1) else "") +
+                  ("Go " if ((data>>0)&1) else ""))
+        data = self.csr_read32(0, 0x08)
+        datapath_width = ((data >> 16) & 0xffff)
+        datapath_pipe_stages = ((data >> 16) & 0xffff)
+        data = self.csr_read32(0, 0x0c)
+        datapath_logic_levels = ((data >> 24) & 0xff)
+        datapath_lut_inputs = ((data >> 20) & 0xf)
+        util.info(f"Logic Datapath Width: {datapath_width}-bit, {datapath_pipe_stages} pipe stages, each "+
+                  f"stage is {datapath_logic_levels} logic levels of {datapath_lut_inputs}-input LUTS")
+
+    def command_dump(self, parts=[], help_line=False):
+        if help_line: return "Dumps detailed config/status info of the block in human readable form";
+        self.info(f"Dumping {self}:")
+        data = self.dump_reg(0, 0x0000, "OcID", [ [31,16,"ID"], [7,0,"DATAPATH_COUNT"] ])
+        self.dump_reg(0, 0x0004, "Control", [ [31,31,"DONE"], [0,0,"GO"] ])
+        self.dump_reg(0, 0x0008, "Param0", [ [31,16,"DATAPATH_WIDTH"], [15,0,"DATAPATH_PIPE_STAGES"] ])
+        self.dump_reg(0, 0x000c, "Param1", [ [31,24,"DATAPATH_LOGIC_LEVELS"], [23,20,"DATAPATH_LUT_INPUTS"] ])
+        self.dump_reg(0, 0x0010, "CurrentChunk")
+        self.dump_reg(0, 0x0014, "LastChunk")
+        for i in range(self.datapath_count):
+            self.dump_reg(0, 0x0018+(i*4), "Result{i}")
+
+    def command_run(self, parts=[], help_line=False):
+        if help_line: return "Runs and returns signatures.  Takes one argument, the last chunk (i.e.0 means run one chunk)";
+        if len(parts) != 1:
+            util.error(f"Need one argument for 'run'", do_exit=False)
+            raise HandledError
+        num_chunks = eval_number(parts.pop(0))
+        self.csr_write32(0, 0x14, num_chunks)
+        self.csr_write32(0, 0x04, 1)
+        data = 0
+        while not (data & 0x80000000):
+            data = self.csr_read32(0, 0x04)
+        for i in range(self.datapath_count):
+            data = self.csr_read32(0, 0x0018+(i*4))
+            util.info(f"Result from DP[{i}]: {data:08x}")
+
+    def command_check(self, parts=[], help_line=False):
+        if help_line: return "Runs and returns signatures.  Requires the length and the expected results"
+        if len(parts) != (1+self.datapath_count):
+            util.error(f"Need {1+self.datapath_count} arguments for 'check': <length-1> and <result> (x DatapathCount) ", do_exit=False)
+            raise HandledError
+        num_chunks = eval_number(parts.pop(0))
+        expect = []
+        for i in range(self.datapath_count):
+            expect.append(eval_number(parts.pop(0)))
+        self.csr_write32(0, 0x14, num_chunks)
+        self.csr_write32(0, 0x04, 1)
+        data = 0
+        while not (data & 0x80000000):
+            data = self.csr_read32(0, 0x04)
+        for i in range(self.datapath_count):
+            data = self.csr_read32(0, 0x0018+(i*4))
+            if data == expect[i]: util.info(f"Result from DP[{i}]: {data:08x} (OK)")
+            else : util.warning(f"Result from DP[{i}]: {data:08x} (MISMATCH, expected {expect[i]:08x})")
+
 # **** Register all the block classes into a table that can be queried by GUI
 
 block_table[0] = { 'name' : 'Unknown'    , 'csrid' :  0, 'handler' : Block           }
 block_table[2] = { 'name' : 'ChipMon'    , 'csrid' :  2, 'handler' : BlockChipMon    }
+block_table[3] = { 'name' : 'Protect'    , 'csrid' :  3, 'handler' : BlockProtect    }
+block_table[4] = { 'name' : 'Dummy'      , 'csrid' :  4, 'handler' : BlockDummy      }
 block_table[5] = { 'name' : 'IIC'        , 'csrid' :  5, 'handler' : BlockIIC        }
 block_table[6] = { 'name' : 'LED'        , 'csrid' :  6, 'handler' : BlockLED        }
 block_table[7] = { 'name' : 'GPIO'       , 'csrid' :  7, 'handler' : BlockGPIO       }
@@ -571,7 +746,7 @@ class Channel:
 
     def scan_chip(self, create_handlers=True, force_new_handlers=False):
         self.chip_info_load()
-        for b in range(0, int(self.chip_info_strings['blocks_top'])):
+        for b in range(0, int(self.chip_info_strings['block_top_count'])):
             temp32 = self.csr_read32(b, 0, 0)
             csrid = ((temp32 >> 16) & 0xffff)
             params = (temp32 & 0xffff)
@@ -765,18 +940,153 @@ class SerialChannel(Channel):
             print(f"  {data:08x} -> [{block:04x}][{space:01x}][{address:08x}]")
 
 # **************************************************************
-# **** Commands
+# **** Top Level Commands
 
-class Command:
-    def __init__(self, channel):
-        self.channel = channel
+def command_set(ch, parts, help_line=False):
+    global global_vars
+    if help_line:
+        util.info(f"Syntax: set [<var> [<value>]]")
+        util.info(f"With no arguments, displays value of all variables")
+        util.info(f"With one argument, displays value of one variable")
+        util.info(f"With two arguments, sets value of one variable")
+        util.info(f"Variables are used in various places in the OC_CLI UI, generally")
+        util.info(f"using '$var' syntax in CLI inputs will use substitution if the")
+        util.info(f"name matches")
+        return
+    if (len(parts) < 1):
+        for key,value in sorted(global_vars.items()):
+            util.info(f"{key}={value}")
+        return
+    key = parts.pop(0)
+    if (len(parts)): # set
+        global_vars[key] = parts.pop(0)
+    else: # get
+        if key in global_vars: util.info(f"SET: ${key} = {global_vars[key]}")
+        else: util.warning(f"SET: var '${key}' does not exist")
 
-class CommandInfo(Command):
-    def __init__(self, channel):
-        Command.__init__(self, channel)
-    def process_tokens(ch, parts):
-        pass
+def command_read (ch, parts, help_line=False):
+    if help_line:
+        util.info(f"Syntax: read|rd|r <address> [<block> <space> [<length> [<jump>]]]")
+        return
+    if (len(parts) < 1):
+        util.info(f"Syntax: read|rd|r <address> [<block> <space> [<length> [<jump>]]]")
+        util.error(f"Need at least an address to read", do_exit=False)
+        raise HandledError
+    address = eval_number(parts.pop(0), ishex=True)
+    if parse_block_space(parts):
+        if parse_block_space(parts) == 2:
+            util.info(f"Syntax: read|rd|r <address> [<block> <space> [<length> [<jump>]]]")
+            util.error(f"Need a block and space after address", do_exit=False)
+            raise HandledError
+    if ((address < 0) or (address > 0xffffffff)):
+        util.error(f"Address {address:08x} is not a 32-bit value", do_exit=False)
+        raise HandledError
+    elif len(parts):
+        length = eval_number(parts.pop(0), ishex=True)
+        jump = 4
+        if (len(parts)):
+            jump = eval_number(parts.pop(0), ishex=True)
+        on_this_line = 0
+        for offset in range(0, length, jump):
+            if (on_this_line == 0):
+                print("%08x : " % (address+offset), end='')
+            data = ch.csr_read32(current_block, current_space, address + offset)
+            print("%08x " % data, end='')
+            on_this_line += 1
+            if on_this_line == 8:
+                print("")
+                on_this_line = 0
+        if (on_this_line):
+            print("")
+    else:
+        ch.csr_read32(current_block, current_space, address, verbose=True)
 
+def command_write (ch, parts, help_line=False):
+    if help_line:
+        util.info(f"Syntax: write|wr|w <address> <data> [<block> <space> [<length> [<jump>]]]")
+        return
+    if (len(parts) < 2):
+        util.info(f"Syntax: write|wr|w <address> <data> [<block> <space> [<length> [<jump>]]]")
+        util.error(f"Need at least an address and data to write", do_exit=False)
+        raise HandledError
+    address = eval_number(parts.pop(0), ishex=True)
+    data = eval_number(parts.pop(0), ishex=True)
+    if parse_block_space(parts):
+        if parse_block_space(parts) == 2:
+            util.info(f"Syntax: write|wr|w <address> <data> [<block> <space> [<length> [<jump>]]]")
+            util.error(f"Need a channel and space after address", do_exit=False)
+            raise HandledError
+    if ((address < 0) or (address > 0xffffffff)):
+        util.error(f"Address {address:08x} is not a 32-bit value", do_exit=False)
+        raise HandledError
+    elif ((data < 0) or (data > 0xffffffff)):
+        util.error(f"Data {data:08x} is not a 32-bit value", do_exit=False)
+        raise HandledError
+    else:
+        ch.csr_write32(current_block, current_space, address, data, verbose=True)
+
+def command_keygen(ch, parts, help_line=False):
+    def usage(s="", quiet=False):
+        util.info(f"Syntax: keygen create <fpga_serial:32> <bitstream_id:32> <key0:32> <key1:32> <key2:32> <key3:32> ")
+        util.info(f"            ... returns <lic0:32>, <lic1:32>")
+        util.info(f"        keygen check <fpga_serial:32> <bitstream_id:32> <key0:32> <key1:32> <key2:32> <key3:32> <lic0:32> <lic1:32>")
+        util.info(f"            ... returns PASS/FAIL")
+        util.info(f"Note: create a key for fpga_serial==0x12345678 to create a skeleton key (bitstream needs to support this)")
+        util.info(f"Note: create a key for inverted bitstream_id to create a timed demo key (bitstream needs to support this)")
+        if quiet: return
+        util.error(s, do_exit=False)
+        raise HandledError
+    if len(parts) and parts[0]=='help':
+        usage(quiet=True)
+        return
+    cmd = parts.pop(0)
+    if ((cmd != 'create') and (cmd != 'check')):  usage(f"Command must be 'create' or 'check'")
+    if ((cmd == 'create') and (len(parts) != 6)): usage(f"Need six arguments for 'create'")
+    if ((cmd == 'check') and (len(parts) != 8)):  usage(f"Need eight arguments for 'check'")
+    fpga_serial = eval_number(parts.pop(0), ishex=True)
+    bitstream_id = eval_number(parts.pop(0), ishex=True)
+    key = [ eval_number(parts.pop(0), ishex=True),
+            eval_number(parts.pop(0), ishex=True),
+            eval_number(parts.pop(0), ishex=True),
+            eval_number(parts.pop(0), ishex=True) ]
+    if cmd=='check':
+      # we are going to decrypt the license (ciphertext) using secret bitstream key.  that should result in
+      # plaintext that looks like {serial:32, bitstream:32}
+      lic = [ eval_number(parts.pop(0), ishex=True), eval_number(parts.pop(0), ishex=True)]
+      pt = btea(lic, -len(lic), key)
+      if ((pt[0] == fpga_serial) and (pt[1] == bitstream_id)):
+        util.info("PASS: License valid")
+      elif ((pt[0] == 0x12345678) and (pt[1] == bitstream_id)):
+        util.info("PASS: License is a valid skeleton key (if bitfile supports them)")
+      elif ((pt[0] == fpga_serial) and (pt[1] == (bitstream_id^0xffffffff))):
+        util.info("PASS: License is a valid timed eval key (if bitfile supports them)")
+      else:
+        util.warning(f"FAIL: License doesn't match")
+        util.warning(f"Assuming good KEY, license is for FPGA_SERIAL={fpga_serial:08x}, BITSTREAM_ID={bitstream_id:08x}")
+        util.warning(f"That bitstream ID can be checked against the secret bitstream KEY (if known) to confirm above")
+    else: # create
+      din = [ fpga_serial, bitstream_id ]
+      lic = btea(din, len(din), key)
+      util.info(f"LICENSE: {lic[0]:08x} {lic[1]:08x}")
+
+def command_help(ch, parts):
+    util.info(f"")
+    util.info(f"OC_CLI HELP")
+    util.info(f"")
+    util.info(f"For any of these commands, get more info with '<cmd> help'...")
+    util.info(f"")
+    util.info(f"Terminal Basics:")
+    util.info(f"  quit, debug, set, history     : as typical")
+    util.info(f"")
+    util.info(f"Low level channel control:")
+    util.info(f"  reset, ping, info, scan       : generally start with reset, ping, info, scan")
+    util.info(f"")
+    util.info(f"Raw CSR access:")
+    util.info(f"  read <address> [<block> [<space>]]  : aka r/rd, will cache block/space for brevity")
+    util.info(f"  read, write                   : raw CSR access")
+    util.info(f"")
+    util.info(f"Helpful:")
+    util.info(f"  keygen                        : create/check PROTECT keys")
 
 # **************************************************************
 # **** Token processing
@@ -803,11 +1113,11 @@ def parse_block_space(parts):
             current_space = space
     return 0
 
+
 def process_tokens(ch, parts):
     global interactive_channel
     global interactive_space
     global mode_binary
-    global global_vars
     global source_stack
     command = parts.pop(0)
     try:
@@ -836,30 +1146,17 @@ def process_tokens(ch, parts):
             print(f"OC_TTY->{line}")
             readline.replace_history_item(total_items-1, line)
             source_stack.append([line])
+        elif command == 'debug':
+            if (len(parts) < 1):
+                util.info(f"Debug level is currently {util.debug_level}, change with 'debug <level>'")
+                return
+            util.set_debug_level( eval_number(parts.pop(0)) )
         elif command == 'ping' or command == 'p':
             ch.ping()
         elif command == 'flush':
             ch.flush()
         elif command == 'reset':
             ch.reset()
-        elif command == 'debug':
-            if (len(parts) < 1):
-                util.info(f"Debug level is currently {util.debug_level}, change with 'debug <level>'")
-                return
-            util.set_debug_level( eval_number(parts.pop(0)) )
-        elif command == 'set':
-            if (len(parts) < 1):
-                for key,value in sorted(global_vars.items()):
-                    util.info(f"{key}={value}")
-                return
-            key = parts.pop(0)
-            if (len(parts)): # set
-                global_vars[key] = parts.pop(0)
-            else: # get
-                if key in global_vars:
-                    util.info(f"SET: ${key} = {global_vars[key]}")
-                else:
-                    util.warning(f"SET: var '${key}' does not exist")
         elif command == 'info':
             ch.show_chip_info()
         elif command == 'scan':
@@ -867,59 +1164,11 @@ def process_tokens(ch, parts):
         elif command == 'timers':
             ch.show_chip_timers()
         elif command == 'read' or command == 'rd' or command == 'r':
-            if (len(parts) < 1):
-                util.info(f"Syntax: read|rd|r <address> [<block> <space> [<length> [<jump>]]]")
-                util.error(f"Need at least an address to read", do_exit=False)
-                raise HandledError
-            address = eval_number(parts.pop(0), ishex=True)
-            if parse_block_space(parts):
-                if parse_block_space(parts) == 2:
-                    util.info(f"Syntax: read|rd|r <address> [<block> <space> [<length> [<jump>]]]")
-                    util.error(f"Need a block and space after address", do_exit=False)
-                    raise HandledError
-            if ((address < 0) or (address > 0xffffffff)):
-                util.error(f"Address {address:08x} is not a 32-bit value", do_exit=False)
-                raise HandledError
-            elif len(parts):
-                length = eval_number(parts.pop(0), ishex=True)
-                jump = 4
-                if (len(parts)):
-                    jump = eval_number(parts.pop(0), ishex=True)
-                on_this_line = 0
-                for offset in range(0, length, jump):
-                    if (on_this_line == 0):
-                        print("%08x : " % (address+offset), end='')
-                    data = ch.csr_read32(current_block, current_space, address + offset)
-                    print("%08x " % data, end='')
-                    on_this_line += 1
-                    if on_this_line == 8:
-                        print("")
-                        on_this_line = 0
-                if (on_this_line):
-                    print("")
-            else:
-                ch.csr_read32(current_block, current_space, address, verbose=True)
+            command_read(ch, parts)
         elif command == 'write' or command == 'wr' or command == 'w':
-            if (len(parts) < 2):
-                util.info(f"Syntax: write|wr|w <address> <data> [<block> <space> [<length> [<jump>]]]")
-                util.error(f"Need at least an address and data to write", do_exit=False)
-                raise HandledError
-            address = eval_number(parts.pop(0), ishex=True)
-            data = eval_number(parts.pop(0), ishex=True)
-            if parse_block_space(parts):
-                if parse_block_space(parts) == 2:
-                    util.info(f"Syntax: write|wr|w <address> <data> [<block> <space> [<length> [<jump>]]]")
-                    util.error(f"Need a channel and space after address", do_exit=False)
-                    raise HandledError
-            if ((address < 0) or (address > 0xffffffff)):
-                util.error(f"Address {address:08x} is not a 32-bit value", do_exit=False)
-                raise HandledError
-            elif ((data < 0) or (data > 0xffffffff)):
-                util.error(f"Data {data:08x} is not a 32-bit value", do_exit=False)
-                raise HandledError
-            else:
-                ch.csr_write32(current_block, current_space, address, data, verbose=True)
-        elif (command in ch.block_dict): # for commands that open blocks in the channel
+            command_write(ch, parts)
+        # for commands within block drivers
+        elif (command in ch.block_dict):
             if len(parts) < 2:
                 util.info(f"Syntax: {command} <block> <command:'dump','help'> [<command-specific args>]")
                 util.error(f"Need at least a block ID and a command", do_exit=False)
@@ -931,7 +1180,8 @@ def process_tokens(ch, parts):
                 raise HandledError
             handler = ch.block_handler[block]
             handler.process_tokens(parts)
-        elif ("command_%s" % command) in globals(): # for commands pulled in via source
+        # for top level commands pulled in via plugin
+        elif ("command_%s" % command) in globals():
             globals()[f"command_{command}"](ch, parts)
         else:
             util.warning(f"Didn't understand command: '{command}'")
@@ -950,32 +1200,32 @@ def process_tokens(ch, parts):
 source_stack = []
 
 def interactive_get_line(ser):
-  global source_stack
-  if (len(source_stack) > 0):
-    # we are sourcing commands from a file, if there's more than one we finish the latest (last) one
-    source_lines = source_stack[len(source_stack)-1]
-    line = source_lines.pop(0)
-    full_line = ""
-    m = re.match(r'^(.*)\\$', line)
-    while (m):
-      full_line += m.group(1)
-      line = source_lines.pop(0)
-      m = re.match(r'^(.*)\\$', line)
-    full_line += line
-    if (len(source_lines) == 0):
-      source_stack.pop(-1) # we are done with all lines from the latest list, pop the list off the stack
-    return full_line
-  else:
-    # we have no lines from source commands
-    line = input('OC_TTY->')
-    full_line = ""
-    m = re.match(r'^(.*)\\$', line)
-    while (m):
-      full_line += m.group(1)
-      line = input('        ')
-      m = re.match(r'^(.*)\\$', line)
-    full_line += line
-    return full_line
+    global source_stack
+    if (len(source_stack) > 0):
+        # we are sourcing commands from a file, if there's more than one we finish the latest (last) one
+        source_lines = source_stack[len(source_stack)-1]
+        line = source_lines.pop(0)
+        full_line = ""
+        m = re.match(r'^(.*)\\$', line)
+        while (m):
+            full_line += m.group(1)
+            line = source_lines.pop(0)
+            m = re.match(r'^(.*)\\$', line)
+        full_line += line
+        if (len(source_lines) == 0):
+            source_stack.pop(-1) # we are done with all lines from the latest list, pop the list off the stack
+        return full_line
+    else:
+        # we have no lines from source commands
+        line = input('OC_TTY->')
+        full_line = ""
+        m = re.match(r'^(.*)\\$', line)
+        while (m):
+            full_line += m.group(1)
+            line = input('        ')
+            m = re.match(r'^(.*)\\$', line)
+        full_line += line
+        return full_line
 
 def interactive(ch):
     global debug
@@ -1033,7 +1283,6 @@ def parse_names():
                 if current_table == None:
                     util.error(f"Entry outside of table declaration found at {filename}:{line}")
                 name_tables[current_table][int(m.group(1),16)] = m.group(2)
-    print(name_tables)
 
 def lookup_table_string(table, index):
     if isinstance(table, str) and table in name_tables:

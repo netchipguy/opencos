@@ -159,3 +159,13 @@ oclib_csr_to_axil:
 
 oclib_fifo:
         oclib_fifo.sv
+
+oclib_xxtea:
+        oclib_xxtea.sv
+
+oclib_fpga_serial:
+        oclib_fpga_serial.sv
+
+oclib_dummy_logic:
+        oclib_dummy_logic.sv
+        oclib_module_reset

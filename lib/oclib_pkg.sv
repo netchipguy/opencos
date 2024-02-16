@@ -132,13 +132,14 @@ package oclib_pkg;
   localparam [CsrIdBits-1:0]      CsrIdPll = 'd1;
   localparam [CsrIdBits-1:0]      CsrIdChipMon = 'd2;
   localparam [CsrIdBits-1:0]      CsrIdProtect = 'd3;
-  localparam [CsrIdBits-1:0]      CsrIdHbm = 'd4;
+  localparam [CsrIdBits-1:0]      CsrIdDummy = 'd4;
   localparam [CsrIdBits-1:0]      CsrIdIic = 'd5;
   localparam [CsrIdBits-1:0]      CsrIdLed = 'd6;
   localparam [CsrIdBits-1:0]      CsrIdGpio = 'd7;
   localparam [CsrIdBits-1:0]      CsrIdFan = 'd8;
-  localparam [CsrIdBits-1:0]      CsrIdCmac = 'd9;
-  localparam [CsrIdBits-1:0]      CsrIdPcie = 'd10;
+  localparam [CsrIdBits-1:0]      CsrIdHbm = 'd9;
+  localparam [CsrIdBits-1:0]      CsrIdCmac = 'd10;
+  localparam [CsrIdBits-1:0]      CsrIdPcie = 'd11;
 
   localparam integer              BlockIdBits = 16; // must be multiple of 8
 

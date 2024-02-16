@@ -257,7 +257,7 @@ module oc_chipmon #(
     //   [31:16] csrId
     localparam integer NumCsr = 1;
 
-    localparam logic [11:0] ChipMonType = 12'd1; // NULL IMPLEMENTATION
+    localparam logic [11:0] ChipMonType = 12'd0; // "NONE" IMPLEMENTATION
     localparam logic [31:0] CsrId = { oclib_pkg::CsrIdChipMon,
                                       ChipMonType, 4'd0 };
 

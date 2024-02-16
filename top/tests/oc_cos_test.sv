@@ -458,13 +458,14 @@ module oc_cos_test
 
   integer                           foundPlls = 0;
   integer                           foundChipMons = 0;
-  integer                           foundProtects = 0;
   integer                           foundIics = 0;
   integer                           foundLeds = 0;
   integer                           foundGpios = 0;
   integer                           foundFans = 0;
   integer                           foundHbms = 0;
   integer                           foundCmacs = 0;
+  integer                           foundProtects = 0;
+  integer                           foundDummys = 0; // yes I know the spelling
   integer                           foundUnknowns = 0;
 
   task TestEnumerate();
@@ -484,11 +485,16 @@ module oc_cos_test
       if (blockType == oclib_pkg::CsrIdChipMon) begin : chipmon
         logic InternalReference;
         logic [11:0] ChipMonType;
+        $display("%t %m: ****************************", $realtime);
         $display("%t %m: *** Found: Type %04x: CHIPMON #%0d ***", $realtime, blockType, foundChipMons);
         ChipMonType = blockParams[15:4];
         InternalReference = blockParams[0];
         $display("%t %m: Param: InternalReference=%0d", $realtime, InternalReference);
         $display("%t %m: Param: ChipMonType=%0d", $realtime, ChipMonType);
+        if (ChipMonType == 0) begin
+          $display("%t %m: Type==0 means 'NONE', so skipping further checks", $realtime);
+          continue;
+        end
         $display("%t %m: Reading temperature (not sure what to expect, hard to predict0", $realtime);
         CsrRead (b, 1, 'h0000, readData); // DRP space
         if (RefClockHz[ClockTop] == 100_000_000) CsrReadCheck (b, 1, 'h0042, 'h1600); // DRP space
@@ -502,6 +508,7 @@ module oc_cos_test
       else if (blockType == oclib_pkg::CsrIdIic) begin : iic
         logic [11:0] OffloadType;
         logic        OffloadEnable;
+        $display("%t %m: ****************************", $realtime);
         $display("%t %m: *** Found: Type %04x: IIC #%0d ***", $realtime, blockType, foundIics);
         OffloadType = blockParams[15:4];
         OffloadEnable = blockParams[0];
@@ -513,6 +520,7 @@ module oc_cos_test
 
       else if (blockType == oclib_pkg::CsrIdLed) begin : led
         logic [7:0] NumLeds;
+        $display("%t %m: ****************************", $realtime);
         $display("%t %m: *** Found: Type %04x: LED #%0d ***", $realtime, blockType, foundLeds);
         NumLeds = blockParams[7:0];
         $display("%t %m: Param: NumLeds=%0d", $realtime, NumLeds);
@@ -530,6 +538,7 @@ module oc_cos_test
 
       else if (blockType == oclib_pkg::CsrIdGpio) begin : gpio
         logic [7:0] NumGpios;
+        $display("%t %m: ****************************", $realtime);
         $display("%t %m: *** Found: Type %04x: GPIO #%0d ***", $realtime, blockType, foundGpios);
         NumGpios = blockParams[7:0];
         $display("%t %m: Param: NumGpios=%0d", $realtime, NumGpios);
@@ -543,11 +552,46 @@ module oc_cos_test
 
       else if (blockType == oclib_pkg::CsrIdFan) begin : fan
         logic [7:0] NumFans;
+        $display("%t %m: ****************************", $realtime);
         $display("%t %m: *** Found: Type %04x: FAN #%0d ***", $realtime, blockType, foundFans);
         NumFans = blockParams[7:0];
         $display("%t %m: Param: NumFans=%0d", $realtime, NumFans);
         $display("%t %m: ****************************", $realtime);
         foundFans++;
+      end
+
+      else if (blockType == oclib_pkg::CsrIdProtect) begin : protect
+        logic EnableSkeletonKey;
+        logic EnableTimedLicense;
+        logic EnableParanoia;
+        $display("%t %m: ****************************", $realtime);
+        $display("%t %m: *** Found: Type %04x: PROTECT #%0d ***", $realtime, blockType, foundProtects);
+        EnableSkeletonKey = blockParams[0];
+        EnableTimedLicense = blockParams[1];
+        EnableParanoia = blockParams[2];
+        $display("%t %m: Param: EnableSkeletonKey=%0d", $realtime, EnableSkeletonKey);
+        $display("%t %m: Param: EnableTimedLicense=%0d", $realtime, EnableTimedLicense);
+        $display("%t %m: Param: EnableParanoia=%0d", $realtime, EnableParanoia);
+        $display("%t %m: ****************************", $realtime);
+        foundProtects++;
+      end
+
+      else if (blockType == oclib_pkg::CsrIdDummy) begin : dummy
+        logic [7:0] DatapathCount;
+        $display("%t %m: ****************************", $realtime);
+        $display("%t %m: *** Found: Type %04x: DUMMY #%0d ***", $realtime, blockType, foundDummys);
+        DatapathCount = blockParams[7:0];
+        $display("%t %m: Param: DatapathCOunt=%0d", $realtime, DatapathCount);
+        // OK run the engine for a bit
+        CsrWrite(b, 0, 32'h14, 32'h00000000); // once chunk
+        CsrWrite(b, 0, 32'h04, 32'h00000001); // go
+        readData = 32'h00000000;
+        while (readData[31] == 0) begin
+          CsrRead(b, 0, 32'h4, readData);
+        end
+        CsrReadCheck(b, 0, 32'h18, 32'hd1ff271f);
+        $display("%t %m: ****************************", $realtime);
+        foundDummys++;
       end
 
       else begin

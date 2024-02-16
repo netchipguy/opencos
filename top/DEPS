@@ -8,6 +8,8 @@ oc_cos:
         oc_led
         oc_gpio
         oc_fan
+        oc_protect
+        oc_dummy
         ../lib/oclib_reset
         ../lib/oclib_csr_tree_splitter
 
@@ -47,4 +49,17 @@ oc_fan:
         oc_fan.sv
         ../lib/oclib_module_reset
         ../lib/oclib_debounce
+        ../lib/oclib_csr_array
+
+oc_protect:
+        oc_protect.sv
+        ../lib/oclib_xxtea
+        ../lib/oclib_fpga_serial
+        ../lib/oclib_module_reset
+        ../lib/oclib_csr_array
+
+oc_dummy:
+        oc_dummy.sv
+        ../lib/oclib_dummy_logic
+        ../lib/oclib_module_reset
         ../lib/oclib_csr_array
