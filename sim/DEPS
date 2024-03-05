@@ -3,6 +3,25 @@
 
 #eda_multi ignore synth
 
-ocsim_clock: ocsim_clock.sv #eda_multi ignore sim
+ocsim_clock:            #eda_multi ignore sim   # infinite runtime;  it's a clock, if broke we'll know
+        ocsim_clock.sv
 
-ocsim_reset: ocsim_reset.sv
+ocsim_reset:
+        ocsim_reset.sv
+
+ocsim_uart:
+        ocsim_uart.sv
+
+ocsim_data_source:
+        ocsim_data_source.sv
+
+ocsim_data_sink:
+        ocsim_data_sink.sv
+
+ocsim_axil_source:
+        ocsim_axil_source.sv
+
+ocsim_axim_memory:
+        ocsim_axim_memory.sv
+        ../lib/oclib_fifo
+        ../lib/oclib_pipeline

@@ -10,3 +10,9 @@ oclib_bc_bidi_adapter_test:
         ../../sim/ocsim_reset
         ../../sim/ocsim_data_sink
         ../../sim/ocsim_data_source
+
+oclib_memory_bist_test:
+        oclib_memory_bist_test.sv
+        ../oclib_memory_bist
+        ../../sim/ocsim_axil_source
+        ../../sim/ocsim_axim_memory

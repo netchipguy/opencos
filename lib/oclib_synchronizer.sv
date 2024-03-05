@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
 `include "lib/oclib_defines.vh"
-`include "lib/oclib_libraries.vh"
 
 module oclib_synchronizer #(parameter integer Width = 1,
                             parameter integer Enable = 1,

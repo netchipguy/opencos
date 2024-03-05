@@ -4,16 +4,17 @@
 
 module oclib_csr_synchronizer
   #(
-    parameter         type CsrType = oclib_pkg::csr_32_s,
-    parameter         type CsrFbType = oclib_pkg::csr_32_fb_s,
-    parameter integer CsrSelectBits = 1,
-    parameter integer SyncCycles = 3,
-    parameter bit     UseResetIn = 0,
-    parameter bit     UseResetOut = 0,
-    parameter bit     ResetInSync = 0,
-    parameter bit     ResetOutSync = 0,
-    parameter integer ResetInPipeline = 0,
-    parameter integer ResetOutPipeline = 0
+    parameter     type CsrType = oclib_pkg::csr_32_s,
+    parameter     type CsrFbType = oclib_pkg::csr_32_fb_s,
+    parameter int CsrSelectBits = 1,
+    parameter int SyncCycles = 3,
+    parameter int SkewCycles = 2,
+    parameter bit UseResetIn = oclib_pkg::False,
+    parameter bit UseResetOut = oclib_pkg::False,
+    parameter bit ResetInSync = oclib_pkg::False,
+    parameter bit ResetOutSync = oclib_pkg::False,
+    parameter int ResetInPipeline = 0,
+    parameter int ResetOutPipeline = 0
     )
   (
    input                            reset = 1'b0,
@@ -29,16 +30,16 @@ module oclib_csr_synchronizer
    input                            CsrFbType csrOutFb
    );
 
-  localparam integer                DataWidth = $bits(csrIn.wdata);
-  localparam integer                AddressWidth = $bits(csrIn.address);
+  localparam int                    DataWidth = $bits(csrIn.wdata);
+  localparam int                    AddressWidth = $bits(csrIn.address);
 
-  logic                             resetInQ;
-  logic                             resetOutQ;
+  logic                             resetInSync;
+  logic                             resetOutSync;
 
   oclib_module_reset #(.SyncCycles(SyncCycles), .ResetSync(ResetInSync), .ResetPipeline(ResetInPipeline))
   uRESET_IN (.clock(clockIn), .in(UseResetIn ? resetIn : reset), .out(resetInSync));
 
-  oclib_module_reset #(.SyncCycles(SyncCycles), .ResetSync(ResetInSync), .ResetPipeline(ResetInPipeline))
+  oclib_module_reset #(.SyncCycles(SyncCycles), .ResetSync(ResetOutSync), .ResetPipeline(ResetOutPipeline))
   uRESET_OUT (.clock(clockOut), .in(UseResetOut ? resetOut : reset), .out(resetOutSync));
 
   // Synchronize the csr input bus.  This is easy because all the signals are level, not pulse.  We
@@ -59,6 +60,7 @@ module oclib_csr_synchronizer
   enum                        logic [1:0] { StOutIdle, StOutStart, StOutWait, StOutFinish } csrOutState;
   logic                       csrToggleReady;
   logic                       csrToggleError;
+  logic [DataWidth-1:0]       csrReadData;
 
   always_ff @(posedge clockOut) begin
     if (resetOutSync) begin
@@ -68,6 +70,7 @@ module oclib_csr_synchronizer
       csrOutState <= StOutIdle;
       csrToggleReady <= 1'b0;
       csrToggleError <= 1'b0;
+      csrReadData <= '0;
     end
     else begin
       case (csrOutState)
@@ -93,7 +96,8 @@ module oclib_csr_synchronizer
             csrToggleReady <= (csrToggleReady ^ csrOutFb.ready);
             csrToggleError <= (csrToggleError ^ csrOutFb.error);
             csrOutState <= StOutFinish;
-          end
+            csrReadData <= csrOutFb.rdata;
+         end
         end // StOutWait
 
         StOutFinish : begin
@@ -106,21 +110,26 @@ module oclib_csr_synchronizer
     end // else: !if(resetOutSync)
   end // always_ff @ (posedge clockOut)
 
-  assign csrOut.address = csrInSync.address;
-  assign csrOut.write = csrOutWrite;
-  assign csrOut.read = csrOutRead;
-  assign csrOut.wdata = csrInSync.wdata;
+  always_comb begin
+    csrOut = csrInSync;
+    csrOut.write = csrOutWrite;
+    csrOut.read = csrOutRead;
+  end
 
   // Monitor the ready/error toggle strobes, wait a cycle for all signals to come across, then
   // drive csrInFb
 
   logic csrToggleErrorSync;
   logic csrToggleReadySync;
-  logic [DataWidth:0] csrReadDataSync;
+  logic [DataWidth-1:0] csrReadDataSync;
 
-  oclib_synchronizer #(.Width(2 + DataWidth), .SyncCycles(SyncCycles))
-  uRESP_SYNC (.clock(clockOut), .in({csrToggleError, csrToggleReady, csrOutFb.rdata}),
-              .out({csrToggleErrorSync, csrToggleReadySync, csrReadDataSync}));
+  oclib_synchronizer #(.Width(2), .SyncCycles(SyncCycles+SkewCycles))
+  uRESP_CONTROL_SYNC (.clock(clockOut), .in({csrToggleError, csrToggleReady}),
+                      .out({csrToggleErrorSync, csrToggleReadySync}));
+
+  oclib_synchronizer #(.Width(DataWidth), .SyncCycles(SyncCycles))
+  uRESP_DATA_SYNC (.clock(clockOut), .in(csrReadData),
+                   .out(csrReadDataSync));
 
   enum                        logic { StInIdle, StInGo } csrInState;
   logic csrToggleErrorIn;

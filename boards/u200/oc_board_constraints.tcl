@@ -8,15 +8,16 @@ puts "OC_BOARD_CONSTRAINTS.TCL: Setting up managed clocks from board"
 oc_add_clock USER_SI570_CLOCK 6.4 USER_SI570_CLOCK_P
 oc_add_clock QSFP0_CLOCK 6.206 QSFP0_CLOCK_P
 oc_add_clock QSFP1_CLOCK 6.206 QSFP1_CLOCK_P
+oc_add_clock PCIE_REFCLK 10.000 PCIE_REFCLK_P
 
 puts "OC_BOARD_CONSTRAINTS.TCL: Running OC_AUTO_SCOPED_XDC"
-# oc_auto_scoped_xdc
+oc_auto_scoped_xdc
 
 puts "OC_BOARD_CONSTRAINTS.TCL: Running OC_AUTO_ATTR_CONSTRAINTS"
-# oc_auto_attr_constraints
+oc_auto_attr_constraints
 
 puts "OC_BOARD_CONSTRAINTS.TCL: Running OC_AUTO_MAX_DELAY"
-# oc_auto_max_delay
+oc_auto_max_delay
 
 # this is a good place to put any pblocks that would likely apply to forks of this target
 # TODO: make it such that IP pblocks are declared only if the IP is there, i.e. search for cells named uTOP/uBLAH...

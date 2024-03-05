@@ -61,12 +61,12 @@ module oc_iic #(
   //   [   30] offloadDebug
   //   [   31] offloadInterrupt
 
-  localparam [11:0] OffloadType = ((!OffloadEnable) ? 12'd0 :
-                                   `OC_VAL_IFDEF(OC_LIBRARY_ULTRASCALE_PLUS) ? 12'd1 : // xip_iic
-                                   12'hfff); // unknown
+  localparam [7:0] OffloadType = ((!OffloadEnable) ? 8'd0 : // None
+                                  `OC_VAL_IFDEF(OC_LIBRARY_ULTRASCALE_PLUS) ? 8'd1 : // Xilinx AXI-IIC
+                                  8'hff); // unknown
 
   localparam integer NumCsr = 2; // 1 id
-  localparam logic [31:0] CsrId = { oclib_pkg::CsrIdIic, OffloadType, 3'd0, OffloadEnable};
+  localparam logic [31:0] CsrId = { oclib_pkg::CsrIdIic, OffloadType, 7'd0, OffloadEnable};
   logic [0:NumCsr-1] [31:0] csrOut;
   logic [0:NumCsr-1] [31:0] csrIn;
 
@@ -122,7 +122,7 @@ module oc_iic #(
                   .axil(axil), .axilFb(axilFb));
 
     xip_iic uIP (
-                 .s_axi_aclk(clock), .s_axi_aresetn(!resetQ),
+                 .s_axi_aclk(clock), .s_axi_aresetn(!resetSync),
                  .sda_i(iicSda), .sda_o(), .sda_t(offloadSdaTristate),
                  .scl_i(iicScl), .scl_o(), .scl_t(offloadSclTristate),
                  .s_axi_awaddr(axil.awaddr[8:0]),

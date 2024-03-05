@@ -38,21 +38,21 @@ module oc_uart_control_test;
   ocsim_uart #(.Baud(Baud), .Verbose(Verbose))
   uCONTROL_UART (.rx(uartTx), .tx(uartRx));
 
-  localparam                      type UartControlBcType = oclib_pkg::bc_8b_bidi_s;
-  UartControlBcType               dutBcIn, dutBcOut;
+  localparam                      type BcType = oclib_pkg::bc_8b_bidi_s;
+  BcType                          dutBcIn, dutBcOut;
 
   localparam logic [0:1] [7:0]    BlockTopCount = 'h1234;
   localparam logic [0:1] [7:0]    BlockUserCount = 'h5678;
 
    `ifdef OC_UART_CONTROL_CSR_32_NOC
-  localparam                      type CsrTopType = oclib_pkg::csr_32_noc_s;
-  localparam                      type CsrTopFbType = oclib_pkg::csr_32_noc_fb_s;
+  localparam                      type TopCsrType = oclib_pkg::csr_32_noc_s;
+  localparam                      type TopCsrFbType = oclib_pkg::csr_32_noc_fb_s;
    `elsif OC_UART_CONTROL_CSR_32_TREE
-  localparam                      type CsrTopType = oclib_pkg::csr_32_tree_s;
-  localparam                      type CsrTopFbType = oclib_pkg::csr_32_tree_fb_s;
+  localparam                      type TopCsrType = oclib_pkg::csr_32_tree_s;
+  localparam                      type TopCsrFbType = oclib_pkg::csr_32_tree_fb_s;
    `else
-  localparam                      type CsrTopType = oclib_pkg::csr_32_s;
-  localparam                      type CsrTopFbType = oclib_pkg::csr_32_fb_s;
+  localparam                      type TopCsrType = oclib_pkg::csr_32_s;
+  localparam                      type TopCsrFbType = oclib_pkg::csr_32_fb_s;
    `endif
 
   // this is internal to the block, i.e. we can force it to use async connection UART <> state machine
@@ -60,8 +60,8 @@ module oc_uart_control_test;
 
   oc_uart_control #(.ClockHz(ClockHz),
                     .Baud(Baud),
-                    .UartControlBcType(UartControlBcType),
-                    .UartControlProtocol(CsrTopType),
+                    .BcType(BcType),
+                    .BcProtocol(TopCsrType),
                     .UartBcType(UartBcType),
                     .BlockTopCount(BlockTopCount),
                     .BlockUserCount(BlockUserCount),
@@ -77,28 +77,29 @@ module oc_uart_control_test;
 
  `ifdef OC_UART_CONTROL_CPU_TREE_TEST
 
-  CsrTopType csrTop;
-  CsrTopFbType csrTopFb;
+  TopCsrType topCsr;
+  TopCsrFbType topCsrFb;
 
   oclib_csr_adapter #(.CsrInType(oclib_pkg::bc_8b_bidi_s), .CsrInFbType(oclib_pkg::bc_8b_bidi_s),
-                      .CsrOutType(CsrTopType), .CsrOutFbType(CsrTopFbType),
-                      .CsrIntType(CsrTopType), .CsrIntFbType(CsrTopFbType),
+                      .CsrOutType(TopCsrType), .CsrOutFbType(TopCsrFbType),
+                      .CsrIntType(TopCsrType), .CsrIntFbType(TopCsrFbType),
                       .UseClockOut(0)  )
   uCSR_ADAPTER (.clock(clock), .reset(reset),
                 .clockOut(), .resetOut(),
                 .in(dutBcOut), .inFb(dutBcIn),
-                .out(csrTop), .outFb(csrTopFb)  );
+                .out(topCsr), .outFb(topCsrFb)  );
 
   oclib_pkg::csr_32_s csr [1];
   oclib_pkg::csr_32_fb_s csrFb [1];
+  logic                           splitterResetRequest;
 
   oclib_csr_tree_splitter #(.Outputs(1),
-                            .CsrInType(CsrTopType), .CsrInFbType(CsrTopFbType),
+                            .CsrInType(TopCsrType), .CsrInFbType(TopCsrFbType),
                             .CsrOutType(oclib_pkg::csr_32_s), .CsrOutFbType(oclib_pkg::csr_32_fb_s) )
   uCSR_SPLITTER (.clock(clock), .reset(reset),
                  .clockOut(), .resetOut(),
-                 .resetRequest(),
-                 .in(csrTop), .inFb(csrTopFb),
+                 .resetRequest(splitterResetRequest),
+                 .in(topCsr), .inFb(topCsrFb),
                  .out(csr), .outFb(csrFb)  );
 
   localparam integer              NumCsr = 4;
@@ -132,24 +133,128 @@ module oc_uart_control_test;
 
  `endif // !  OC_UART_CONTROL_CPU_TREE_TEST
 
+  // The following APIs perform multiple operations to the above, to work on INTs, STRINGs, etc
+
+  logic         txEnterCR = 1;
+  logic         txEnterLF = 0;
+  logic         rxEnterCR = 1;
+  logic         rxEnterLF = 1;
+
+  task ControlSendEnter();
+    if (txEnterCR) uCONTROL_UART.Send(8'h0d);
+    if (txEnterLF) uCONTROL_UART.Send(8'h0a);
+  endtask // ControlSendEnter
+
+  task ControlExpectString ( input string s );
+    for (int i=0; i<s.len(); i++) uCONTROL_UART.Expect(s[i]);
+  endtask // ControlExpectRxByte
+
+  task ControlReceiveEnter();
+    if (rxEnterCR) uCONTROL_UART.ReceiveCheck(8'h0d);
+    if (rxEnterLF) uCONTROL_UART.ReceiveCheck(8'h0a);
+  endtask // ControlReceiveEnter
+
+  task ControlSendInt ( input [63:0] v, input binaryMode = 0, input integer len );
+    int c;
+    bit done;
+    c = '0;
+    done = 0;
+    while (!done) begin
+        if (binaryMode) begin
+          uCONTROL_UART.Send((v >> (8*(len-1-c))) & 8'hff);
+          if (c++ >= (len-1)) done = 1;
+        end
+        else begin
+          uCONTROL_UART.Send(oclib_pkg::HexToAsciiNibble(v >> (4*((len*2)-1-c))) & 8'hf);
+          if (c++ >= ((2*len)-1)) done = 1;
+        end
+    end
+  endtask // ControlSendInt
+
+  task ControlSendInt8 ( input [7:0] v, input binaryMode = 0 );
+    ControlSendInt({'0,v}, binaryMode, 1);
+  endtask // ControlSendInt8
+
+  task ControlSendInt16 ( input [15:0] v, input binaryMode = 0 );
+    ControlSendInt({'0,v}, binaryMode, 2);
+  endtask // ControlSendInt16
+
+  task ControlSendInt32 ( input [31:0] v, input binaryMode = 0 );
+    ControlSendInt({'0,v}, binaryMode, 4);
+  endtask // ControlSendInt32
+
+  task ControlSendInt64 ( input [63:0] v, input binaryMode = 0 );
+    ControlSendInt(v, binaryMode, 8);
+  endtask // ControlSendInt64
+
+  task ControlReceiveInt ( output [63:0] v, input integer maxNS = 1000000, input binaryMode = 0, input integer len );
+    int i;
+    int c;
+    bit done;
+    logic [7:0] temp8;
+    logic [63:0] temp64;
+    i = '0;
+    c = '0;
+    done = 0;
+    temp64 = 'X;
+    while (!done) begin
+      uCONTROL_UART.Receive(temp8, maxNS/4);
+      if (binaryMode) begin
+        temp64 = { temp64[55:0], temp8 };
+        if (c++ >= (len-1)) done = 1;
+      end
+      else begin
+        temp64 = { temp64[59:0], oclib_pkg::AsciiToHexNibble(temp8) };
+        if (c++ >= ((2*len)-1)) done = 1;
+      end
+      if (done) v = temp64;
+    end
+  endtask // ControlReceiveInt
+
+  task ControlReceiveInt8 ( output [7:0] v, input integer maxNS = 1000000, input binaryMode = 0 );
+    logic [63:0] o;
+    ControlReceiveInt( o, maxNS, binaryMode, 1);
+    v = o[7:0];
+  endtask // ControlReceiveInt8
+
+  task ControlReceiveInt16 ( output [15:0] v, input integer maxNS = 1000000, input binaryMode = 0 );
+    logic [63:0] o;
+    ControlReceiveInt( o, maxNS, binaryMode, 2);
+    v = o[15:0];
+  endtask // ControlReceiveInt16
+
+  task ControlReceiveInt32 ( output [31:0] v, input integer maxNS = 1000000, input binaryMode = 0 );
+    logic [63:0] o;
+    ControlReceiveInt( o, maxNS, binaryMode, 4);
+    v = o[31:0];
+  endtask // ControlReceiveInt32
+
+  task ControlReceiveInt64 ( output [63:0] v, input integer maxNS = 1000000, input binaryMode = 0 );
+    ControlReceiveInt( v, maxNS, binaryMode, 8);
+  endtask // ControlReceiveInt64
+
+
+
+  // TESTS
+
   task TestExpectBanner();
     uCONTROL_UART.Expect(8'h0d);
     uCONTROL_UART.Expect(8'h0a);
-    uCONTROL_UART.ExpectString("* OPENCOS *");
+    ControlExpectString("* OPENCOS *");
     TestExpectPrompt();
   endtask // TestExpectBanner
 
   task TestExpectError();
     uCONTROL_UART.Expect(8'h0d);
     uCONTROL_UART.Expect(8'h0a);
-    uCONTROL_UART.ExpectString("ERROR");
+    ControlExpectString("ERROR");
     TestExpectPrompt();
   endtask // TestExpectError
 
   task TestExpectPrompt();
     uCONTROL_UART.Expect(8'h0d);
     uCONTROL_UART.Expect(8'h0a);
-    uCONTROL_UART.ExpectString("OC>");
+    ControlExpectString("OC>");
     uCONTROL_UART.WaitForIdle();
   endtask // TestExpectPrompt
 
@@ -175,7 +280,7 @@ module oc_uart_control_test;
     $display("%t %m: Sending '<CR><LF>' to get new prompt from the DUT (3 times)", $realtime);
     $display("%t %m: ******************************************", $realtime);
     repeat (3) begin
-      uCONTROL_UART.SendEnter();
+      ControlSendEnter();
       TestExpectPrompt();
       TestExpectIdle();
    end
@@ -191,7 +296,7 @@ module oc_uart_control_test;
     $display("%t %m: Checking there's no response yet", $realtime);
     TestExpectIdle();
     $display("%t %m: Sending '<Enter>'", $realtime);
-    uCONTROL_UART.SendEnter();
+    ControlSendEnter();
     TestExpectError();
     TestExpectIdle();
   endtask // TestSyntaxError
@@ -220,31 +325,31 @@ module oc_uart_control_test;
     $display("%t %m: ******************************************", $realtime);
     $display("%t %m: ** ASCII Mode **", $realtime);
     uCONTROL_UART.Send("t");
-    uCONTROL_UART.SendEnter();
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlSendEnter();
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: Uptime since reload: %08x", $realtime, temp32);
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: Uptime since reset : %08x", $realtime, temp32);
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: Cycles since reset : %08x", $realtime, temp32);
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: Cycles under reset : %08x", $realtime, temp32);
     TestExpectPrompt();
     TestExpectIdle();
     $display("%t %m: ** BINARY Mode **", $realtime);
     uCONTROL_UART.Send("T");
-    uCONTROL_UART.SendEnter();
-    uCONTROL_UART.ReceiveInt32(temp32, .binaryMode(1));
+    ControlSendEnter();
+    ControlReceiveInt32(temp32, .binaryMode(1));
     $display("%t %m: Uptime since reload: %08x", $realtime, temp32);
-    uCONTROL_UART.ReceiveInt32(temp32, .binaryMode(1));
+    ControlReceiveInt32(temp32, .binaryMode(1));
     $display("%t %m: Uptime since reset : %08x", $realtime, temp32);
-    uCONTROL_UART.ReceiveInt32(temp32, .binaryMode(1));
+    ControlReceiveInt32(temp32, .binaryMode(1));
     $display("%t %m: Cycles since reset : %08x", $realtime, temp32);
-    uCONTROL_UART.ReceiveInt32(temp32, .binaryMode(1));
+    ControlReceiveInt32(temp32, .binaryMode(1));
     $display("%t %m: Cycles under reset : %08x", $realtime, temp32);
     TestExpectPrompt();
     TestExpectIdle();
@@ -258,41 +363,41 @@ module oc_uart_control_test;
     $display("%t %m: ******************************************", $realtime);
     $display("%t %m: ** ASCII Mode **", $realtime);
     uCONTROL_UART.Send("i");
-    uCONTROL_UART.SendEnter();
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlSendEnter();
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: InfoVersion        :       %02x", $realtime, temp32[31:24]);
     $display("%t %m: BuilderID          :   %06x", $realtime, temp32[23:0]);
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: BitstreamID        : %08x", $realtime, temp32);
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: BuildDate          : %08x", $realtime, temp32);
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: BuildTime          :   %02x:%02x", $realtime, temp32[31:24], temp32[23:16]);
     $display("%t %m: TargetVendor       :     %04x", $realtime, temp32[15:0]);
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: TargetLibrary      :     %04x", $realtime, temp32[31:16]);
     $display("%t %m: TargetBoard        :     %04x", $realtime, temp32[15:0]);
-    uCONTROL_UART.ReceiveEnter();
-    uCONTROL_UART.ReceiveInt32(temp32);
+    ControlReceiveEnter();
+    ControlReceiveInt32(temp32);
     $display("%t %m: BlockTopCount      :     %04x", $realtime, temp32[31:16]);
     $display("%t %m: BlockUserCount     :     %04x", $realtime, temp32[15:0]);
     for (i=0; i<2; i++) begin
-      uCONTROL_UART.ReceiveEnter();
-      uCONTROL_UART.ReceiveInt32(temp32);
+      ControlReceiveEnter();
+      ControlReceiveInt32(temp32);
     end
     for (i=0; i<4; i++) begin
-      uCONTROL_UART.ReceiveEnter();
-      uCONTROL_UART.ReceiveInt32(temp32);
+      ControlReceiveEnter();
+      ControlReceiveInt32(temp32);
       $display("%t %m: UserSpace%1x         : %08x", $realtime, i, temp32);
     end
     for (i=0; i<4; i++) begin
-      uCONTROL_UART.ReceiveEnter();
-      uCONTROL_UART.ReceiveInt32(temp32);
+      ControlReceiveEnter();
+      ControlReceiveInt32(temp32);
       $display("%t %m: BuildUUID%1x         : %08x", $realtime, i, temp32);
     end
     TestExpectPrompt();
@@ -306,8 +411,8 @@ module oc_uart_control_test;
 
   task CsrReadCheck(input [31:0] address, input [31:0] data);
 
-    CsrTopType csr;
-    CsrTopFbType csrFb;
+    TopCsrType csr;
+    TopCsrFbType csrFb;
     localparam int RequestBytes = (($bits(csr)+7)/8);
     localparam int ResponseBytes = (($bits(csrFb)+7)/8);
     logic [0:RequestBytes-1] [7:0] payloadRequest;
@@ -331,14 +436,14 @@ module oc_uart_control_test;
     for (int i=0; i<ResponseBytes; i++) uCONTROL_UART.ReceiveCheck(payloadResponse[i]);
     $display("%t %s:        %08x <= [%08x] (OK, Match)", $realtime, csrModuleName, data, address);
     uCONTROL_UART.WaitForIdle();
-    uCONTROL_UART.SendEnter();
+    ControlSendEnter();
     TestExpectPrompt();
   endtask
 
   task CsrWrite(input [31:0] address, input [31:0] data);
 
-    CsrTopType csr;
-    CsrTopFbType csrFb;
+    TopCsrType csr;
+    TopCsrFbType csrFb;
     localparam int RequestBytes = (($bits(csr)+7)/8);
     localparam int ResponseBytes = (($bits(csrFb)+7)/8);
     logic [0:RequestBytes-1] [7:0] payloadRequest;
@@ -362,7 +467,7 @@ module oc_uart_control_test;
     for (int i=0; i<ResponseBytes; i++) uCONTROL_UART.ReceiveCheck(payloadResponse[i]);
     $display("%t %s:        %08x => [%08x] (OK)", $realtime, csrModuleName, data, address);
     uCONTROL_UART.WaitForIdle();
-    uCONTROL_UART.SendEnter();
+    ControlSendEnter();
     TestExpectPrompt();
   endtask
 
@@ -416,7 +521,7 @@ module oc_uart_control_test;
     uBC_SOURCE.Send(8'h06); // Length: 6
     for (int i=0; i<6; i++) uBC_SOURCE.Send(i + 10);
     #1us;
-    uCONTROL_UART.SendEnter();
+    ControlSendEnter();
     TestExpectPrompt();
     TestExpectIdle();
   endtask // TestMessage

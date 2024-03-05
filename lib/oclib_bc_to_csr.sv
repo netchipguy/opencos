@@ -4,7 +4,8 @@
 `include "lib/oclib_pkg.sv"
 `include "lib/oclib_defines.vh"
 
-// this should probably be called bc_bidi_to_csr
+// TODO: this should probably be called bc_bidi_to_csr
+// TODO: this will need to take a BcCsrProtocol or equiv, and convert to outbound CSR type.  Right now it's assumed equal.
 
 module oclib_bc_to_csr
   #(
@@ -48,14 +49,14 @@ module oclib_bc_to_csr
                            .WordInWidth(WordResponseWidth), .WordOutWidth(WordRequestWidth))
   uBC_BIDI_TO_WORDS (.clock(clock), .reset(resetSync),
                      .bcIn(bcIn), .bcOut(bcOut),
-                     .wordOutData(wordRequestData), .wordOutValid(WordRequestValid), .wordOutReady(wordRequestReady),
+                     .wordOutData(wordRequestData), .wordOutValid(wordRequestValid), .wordOutReady(wordRequestReady),
                      .wordInData(wordResponseData), .wordInValid(wordResponseValid), .wordInReady(wordResponseReady));
 
   // convert words to CSR
 
   oclib_words_to_csr #(.CsrType(CsrType), .CsrFbType(CsrFbType))
   uWORDS_TO_CSR (.clock(clock), .reset(resetSync),
-                 .wordInData(wordRequestData), .wordInValid(WordRequestValid), .wordInReady(wordRequestReady),
+                 .wordInData(wordRequestData), .wordInValid(wordRequestValid), .wordInReady(wordRequestReady),
                  .wordOutData(wordResponseData), .wordOutValid(wordResponseValid), .wordOutReady(wordResponseReady),
                  .csr(csr), .csrFb(csrFb));
 

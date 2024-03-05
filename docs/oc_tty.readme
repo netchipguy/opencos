@@ -1,0 +1,138 @@
+
+USAGE
+=====
+
+[sudo] oc_tty.py --serial <port>
+
+<port> can be COM<x> (Windows) or /dev/ttyUSB<x> (Linux).  Depending on permissions for /dev/ttyUSB<x>, sudo maybe required.
+
+<port> can also be "tcp:<ip>:<port>:<device>" for connecting via TCP-to-UART bridge.
+
+GLOBAL COMMANDS
+===============
+
+info
+^^ prints compile-time info (UUID, build time/date, included userspace, etc)
+
+probe
+^^ probes the top level (ring) interfaces and reports the type of IP on each channel
+
+binary [on|off]
+^^ reports whether comms are in binary mode, optionally sets the mode (default is 'off')
+
+perf
+^^ does a performance test of the comms channel
+
+debug <n>
+^^ set debug level <n>
+
+ping
+^^ sends <CR> and checks for a prompt, sends "^" and checks for a syntax error response.
+
+reset
+^^ sends 64x '!' characters, which initiates a full chip reset regardless of the state of the device.
+
+source <script file>
+^^ reads in a script with oc_tty commands
+
+import <python file>
+^^ reads in Python code to extend the commands oc_tty understands.  Typically used to pull in a userspace "driver".  Can also be used to "live patch" oc_tty during development work.
+
+set <var> <value>
+^^ sets a variable for use in oc_tty commands.  Refer to variables with $<var> syntax.  Typically used to enable scripts (see 'source') that are independent of channel allocation in the target (for example, 'set user_ch 4' and then a script doing 'memtest $user_ch xxx')
+
+read|rd|r <address> [<channel> <address space>]
+^^ reads a CSR in the device.  <channel> and <address space> are optional after the first rd/wr command; if not provided, the prior values will be used.
+
+write|wr|w <address> <data> [<channel> <address space>]
+^^ writes a CSR in the device.  <channel> and <address space> are optional after the first rd/wr command; if not provided, the prior values will be used.
+
+quit|q
+^^ exit oc_tty
+
+PLL COMMANDS
+============
+
+PLL commands are valid for channels that have a PLL IP (use 'probe' if not sure)
+
+pll <channel>
+^^ dumps the state of the PLL
+
+pll <channel> measure
+^^ measure clock 0 (for now) of the PLL on <channel>
+
+pll <channel> reset
+^^ reset PLL on <channel>.  Generally required after changing multipliers, dividers, etc.
+
+pll <channel> all_up (or all_down)
+^^ move all clocks on PLL up (or down) in frequency, by changing the feedback divider.  does not bounds check.
+
+pll <channel> clk0_up (or clk0_down)
+^^ move CLK0 on PLL up (or down) in frequency, by changing the fractional divider.  does not bounds check.
+
+pll <channel> throttle <level>
+^^ throttles the output clock 0 (for now).  <level> is 0-8, in 12.5% steps, with 0 meaning "no throttling" and 8 meaning "complete stop".
+
+pll <channel> freq <mhz>
+^^ attempts to set the clock of PLL <channel> to <mhz>.  NOT IMPLEMENTED YET!!!  (it's non-trivial)
+
+pll <channel> ramp <command list>
+^^ runs <command list> (an arbitrary oc_tty command line) at the current clock speeds, then ramps up the speed by reducing the fractional divider on the clock.  This will test some limited range (for example 350-410MHz).  To go beyond this, manually changing VCO freq, dividers, etc, will be required.
+
+
+CHIPMON COMMANDS
+================
+
+CHIPMON commands are valid for channels that have a CHIPMON IP (use 'probe' if not sure)
+
+chipmon <channel>
+^^ dumps the state of the CHIPMON
+
+
+PROTECT COMMANDS
+================
+
+PROTECT commands are valid for channels that have a PROTECT IP (use 'probe' if not sure)
+
+protect <channel>
+^^ dumps the state of the PROTECT, including the bitstream ID and the FPGA's unique DNA fingerprint (both of which usually required to get a license)
+
+protect <channel> unlock <key>
+^^ unlocks the bitstream protection using <key>
+
+MEMTEST COMMANDS
+================
+
+MEMTEST is available in the default userspace, and will not be in other userspaces unless specifically included (in which case, there maybe other commands needed to configure the userspace to connect memtest to the memory channels being tested).
+
+memtest <channel>
+^^ dumps the state of the MEMTEST
+
+memtest <channel> <args>
+^^ <args> is:
+   write               - enables writing memory
+   read                - enables reading memory
+   verbose=<x>         - set verbosity to <n> (default 1)
+   ops=<x>             - run <x> operations per port under test (default 1)
+   addr=<x>            - <x> is the base address in memory (default 0)
+   addr_incr=<x>       - <x> as the amount to increment per op (default 0x20, 32 Bytes)
+   addr_incr_mask=<x>  - <x> is a bitmask applied to the increment value before ORing with addr (default 0xffffffffffffffff)
+   addr_rand_mask=<x>  - <x> is a bitmask applied to a random value before ORing with addr (default 0)
+   addr_port_shift=<x> - <x> is the amount to shift the port number to the left before ORing with addr (default 0)
+   addr_port_mask=<x>  - <x> is a bitmask applied to the shifted port number before ORing with addr (default 0)
+   waits=<x>           - <x> is the number of waitstates between ops (default 0)
+   burst=<x>           - <x> is the number of words in each op (default 1).  Note the CSR actually will hold (burst-1).
+   pattern=<x>         - <x> is a 32-bit seed for pattern generation (used to generate write data) (default 0x11111111).
+   signature=<x>       - <x> is the expected signature (which is a combination of all read data)
+   write_max_id        - <x> is the highest AXI ID used for issuing writes (default 0)
+   read_max_id         - <x> is the highest AXI ID used for issuing reads (default 0)
+   prescale            - sets the counter prescaler, will divide counters by N so that they can be sampled at the end of long tests
+   write_len_rand      - enables random write length
+   read_len_rand       - enables random read length
+   write_data_rotate   - enables write data rotation, ensures bus toggling without random data (which can be harder to make sense of in waves)
+   write_data_random   - enables write data randomization (still 'pseudorandom' and will be repeatable in terms of read signature)
+   measure             - report AXI-Lite and AXI3 clock speeds, cycles under reset, and cycles since reset
+   nopoll              - kick off the MEMTEST engine, but don't wait for completion, so oc_tty can be used to monitor temps, etc
+   stats               - report stats (latency, contexts) in summary, or per-port (verbose>1)
+   get_sigs            - report per-port signatures
+   signature_<p>=<x>   - set port <p> expected signature to <x> (default for all ports is -1, which means don't check)

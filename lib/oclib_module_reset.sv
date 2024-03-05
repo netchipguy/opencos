@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
 `include "lib/oclib_defines.vh"
-`include "lib/oclib_libraries.vh"
 `include "lib/oclib_pkg.sv"
 
-module oclib_module_reset #(parameter integer SyncCycles = 3,
-                            parameter bit     ResetSync = oclib_pkg::False,
-                            parameter integer ResetPipeline = 0,
-                            parameter bit     DontTouch = oclib_pkg::True,
-                            parameter bit     NoShiftRegister = oclib_pkg::True)
+module oclib_module_reset #(
+                            parameter int SyncCycles = 3,
+                            parameter bit ResetSync = oclib_pkg::False,
+                            parameter int ResetPipeline = 0,
+                            parameter bit DontTouch = oclib_pkg::True,
+                            parameter bit NoShiftRegister = oclib_pkg::True
+                            )
   (
    input        clock,
    input        in,

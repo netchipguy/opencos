@@ -36,14 +36,14 @@
 
   `define OC_STATIC_ASSERT(a) \
   `ifdef SIMULATION \
-  initial if (!(a)) begin $display("%t %m: (%s) NOT TRUE at %s:%0d", $realtime, `"a`", `__FILE__, `__LINE__); #0; $finish; end \
+  initial if (!(a)) begin $display("%t %m: (%s) NOT TRUE at %s:%0d", $realtime, `"a`", `__FILE__, `__LINE__); $finish; end \
   `else \
   if (!(a)) $fatal(1, "%m: (%s) NOT TRUE", `"a`"); \
   `endif
 
   `define OC_STATIC_ASSERT_STR(a,str) \
   `ifdef SIMULATION \
-  initial if (!(a)) begin $display("%t %m: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); #0; $finish; end \
+  initial if (!(a)) begin $display("%t %m: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); $finish; end \
   `else \
   if (!(a)) $fatal(1, "%m: %s", str); \
   `endif
@@ -61,16 +61,10 @@
   do if (!(a)) begin $display("%t %m: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); $finish; end while (0) \
   `endif
 
-  `define OC_ASSERT_EXPECTED(v,e) \
-  `ifdef SIMULATION \
-  do if (v!==e) begin $display ("%t %m: MISMATCH: %s = %x, but expecting %x at %s:%0d", $realtime, \
-                                `"v`", v, e, `__FILE__, `__LINE__); $finish; end while (0) \
-  `endif
-
   `define OC_ASSERT_EQUAL(a,b) \
   `ifdef SIMULATION \
-  do if (!(a===b)) begin $display ("%t %m: MISMATCH %s (%x), !== %s (%x) at %s:%0d", $realtime, \
-                                   `"a`", a, `"b`", b, `__FILE__, `__LINE__); $finish; end while (0) \
+  do if (!((a)===(b))) begin $display ("%t %m: MISMATCH %s (%x) !== %s (%x) at %s:%0d", $realtime, \
+                                       `"a`", a, `"b`", b, `__FILE__, `__LINE__); $finish; end while (0) \
   `endif
 
 // an assertion that partially implements an error register (without clock / reset, i.e. within !reset part of always_ff block)
@@ -171,10 +165,10 @@
 
   `define OC_STATIC_WARNING(str) \
   `ifdef SIMULATION \
-  initial $warning(1, "%t %m: WARNING: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); \
-  final $warning(1, "%t %m: WARNING: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); \
+  initial $warning("%t %m: WARNING: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); \
+  final $warning("%t %m: WARNING: %s at %s:%0d", $realtime, str, `__FILE__, `__LINE__); \
   `else \
-  $warning(1, "%m: WARNING: %s", str); \
+  $warning("%m: WARNING: %s", str); \
   `endif
 
 // *****************************************************************************************
@@ -292,7 +286,7 @@
   `endif
 
 // *****************************************************************************************
-// ******** HELP SETTING VALUES FROM DEFINES
+// ******** HELP GETTING VALUES FROM DEFINES
 // *****************************************************************************************
 
   `define OC_VAL_ASDEFINED_ELSE(d,e) \
@@ -316,11 +310,46 @@
      1'b0\
   `endif
 
+// idea here is to return "true" (i.e. 1) if "d" is defined as nothing, or defined as 1. Basically
+// if user does say +define+AXIM_MEM_TEST_ENABLE=0 then we don't want that to ENABLE something with that
+  `define OC_VAL_ISTRUE(d) \
+  `ifdef d\
+  ((1```d == 1) || (1```d == 11)) \
+  `else\
+     1'b0\
+  `endif
+
+// *****************************************************************************************
+// ******** HELP GETTING VALUES FROM TYPES
+// *****************************************************************************************
+
+// we use a macro to assist with this.  The right way is comparing via type() but at least
+// Vivado prior to 2022.2 would not handle this correctly in synth when overridden, so we
+// fall back to comparing $bits, but it's not robust (watch out comparing things with
+// same amounts of bits!!!)
+`ifdef OC_TOOL_BROKEN_TYPE_COMPARISON
+  `define OC_TYPES_EQUAL(t1,t2) ($bits(t1)==$bits(t2))
+  `define OC_TYPES_NOTEQUAL(t1,t2) ($bits(t1)!=$bits(t2))
+`else
+  `define OC_TYPES_EQUAL(t1,t2) (type(t1)==type(t2))
+//  `define OC_TYPES_EQUAL(t1,t2) (t1==t2)
+  `define OC_TYPES_NOTEQUAL(t1,t2) (type(t1)!=type(t2))
+`endif
+
 // *****************************************************************************************
 // ******** CODE ASSISTANCE
 // *****************************************************************************************
 
   `define OC_LOCALPARAM_SAFE(m) localparam integer m``Safe = (m ? m : 1)
+
+  `define OC_CONCAT(a,b) a``b
+
+  `define OC_CONCAT3(a,b,c) a``b``c
+
+  `define OC_IFDEF_INCLUDE(d, i) \
+  `ifdef d\
+     i\
+  `endif
 
 // *****************************************************************************************
 // ******** VENDOR RELATED
@@ -336,6 +365,11 @@
 // That being said this should be moved into a "vendor defines" file.
 
   `define OC_DEBUG_VIO(inst, clock, i_width, o_width, i_signals, o_signals) \
+  `ifdef OC_LIBRARY_ULTRASCALE_PLUS \
+    `ifndef OC_LIBRARY_XILINX \
+      `define OC_LIBRARY_XILINX \
+    `endif \
+  `endif \
   `undef OC_DEBUG_VIO_DONE_``inst \
   `ifdef OC_LIBRARY_XILINX \
     `ifndef SIMULATION \
@@ -353,6 +387,11 @@
   `endif
 
   `define OC_DEBUG_ILA(inst, clock, depth, i_width, t_width, i_signals, t_signals) \
+  `ifdef OC_LIBRARY_ULTRASCALE_PLUS \
+    `ifndef OC_LIBRARY_XILINX \
+      `define OC_LIBRARY_XILINX \
+    `endif \
+  `endif \
   `ifdef OC_LIBRARY_XILINX \
     `ifndef SIMULATION \
        logic [i_width-1 : $bits({ i_signals }) ] inst``_dummy_i = '0; \

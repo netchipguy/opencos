@@ -30,3 +30,23 @@
 
 0000: "None"
 0001: "Ultrascale+"
+
+-- PLL_TYPES --
+
+0000: "None"
+0001: "MMCME4_ADV"
+
+-- CHIPMON_TYPES --
+
+0000: "None"
+0001: "SYSMONE4"
+
+-- IIC_OFFLOAD_TYPES --
+
+0000: "None"
+0001: "Xilinx AXI-IIC"
+
+-- PCIE_TYPES --
+
+0000: "None"
+0001: "Xilinx PCIE40E4--based XDMA"

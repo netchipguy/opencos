@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 CORES=`nproc`
-THREADS=$(( CORES > 32 ? 16 : (CORES/2) ))
+THREADS=$(( CORES >= 64 ? 32 : (CORES/2) ))
 echo "*** Host has ${CORES} cores, using ${THREADS} threads ***"
 
 # for now, nothing but kicking off eda

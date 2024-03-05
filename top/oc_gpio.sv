@@ -64,7 +64,7 @@ module oc_gpio #(
   for (genvar i=0; i<GpioCount; i++) begin
     assign gpioOut[i] = csrOut[1+i][0];
     assign gpioTristate[i] = !csrOut[1+i][4];
-    assign csrIn[1+i][8] = gpioInSync[i];
+    assign csrIn[i+1][8] = gpioInSync[i];
   end
 
 endmodule // oc_gpio

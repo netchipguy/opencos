@@ -118,7 +118,7 @@ module oc_protect
   `OC_DEBUG_ILA(uILA, clock, 1024, 512, 32,
                 { ciphertext, plaintext, serial, BitstreamID, BitstreamKey
                   },
-                { '0, resetSync, permanentUnlock, timerUnlock, decryptGo, decryptDone});
+                { resetSync, permanentUnlock, timerUnlock, decryptGo, decryptDone});
   `endif // OC_CHIPMON_INCLUDE_ILA_DEBUG
 
 endmodule // oc_protect

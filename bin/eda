@@ -16,15 +16,17 @@ import curses
 import oc_pylib.util as util
 
 class Command:
+    args = {
+        "keep" : False,
+        "force" : False,
+        "eda-dir" : "eda.work",
+        "job-name" : "",
+        "work-dir" : "",
+        "suffix" : "",
+        "design" : "",
+        "logfile" : "",
+    }
     def __init__(self, config, command_name):
-        self.args = {
-            "keep" : False,
-            "force" : False,
-            "eda-dir" : "eda.work",
-            "work-dir" : "",
-            "design" : "",
-            "logfile" : "",
-        }
         self.modified_args = {}
         self.config = config
         self.command_name = command_name
@@ -41,11 +43,12 @@ class Command:
         if self.target == "":
             self.target = self.args['design']
         if self.args['work-dir'] == "":
-            self.args['work-dir'] = os.path.join(self.args['eda-dir'], "%s_%s" % (self.target, self.command_name))
+            if self.args['job-name'] != "": self.args['work-dir'] = os.path.join(self.args['eda-dir'], self.args['job-name'])
+            else:                           self.args['work-dir'] = os.path.join(self.args['eda-dir'], f"{self.target}_{self.command_name}")
         keep_file = os.path.join(self.args['work-dir'], "eda.keep")
         if (os.path.exists(self.args['work-dir'])):
             if os.path.exists(keep_file) and not self.args['force']:
-                self.error("Cannot remove old work dir due to '%s'" % (keep_file))
+                self.error(f"Cannot remove old work dir due to '{keep_file}'")
             util.info(f"Removing previous '{self.args['work-dir']}'")
             shutil.rmtree(self.args['work-dir'])
         os.mkdir(self.args['work-dir'])
@@ -87,7 +90,7 @@ class Command:
             except KeyboardInterrupt as e:
                 util.fancy_stop()
                 util.info('EXEC: Control-C detected...')
-                exit(-1)
+                util.exit(-1)
             except:
                 e = sys.exc_info()[0]
                 util.error(f"UNKNOWN FAIL: {str(e)}")
@@ -153,8 +156,8 @@ class Command:
                     else:
                         util.error("Need a value after --%s" % (key))
             # we were unable to figure out what this command line token is for...
-            if process_all:  util.error(f"Didn't understand command token: '{tokens[0]}' in {self.command_name} context")
-            else:            return False # if we aren't trying to process_all, the caller hopefully can take it
+            if process_all:          util.error(f"Didn't understand command token: '{tokens[0]}' in {self.command_name} context")
+            else:                    return False # if we aren't trying to process_all, the caller hopefully can take it
         return True
 
     def do_it(self):
@@ -190,6 +193,8 @@ class CommandDesign(Command):
         self.files_vhd = []
         oc_root = util.get_oc_root()
         if oc_root: self.incdirs.append(oc_root)
+        for (d,v) in config['defines'].items():
+            self.defines[d] = v
 
     def get_top_name(self, name):
         return os.path.splitext(os.path.basename(name))[0]
@@ -213,7 +218,7 @@ class CommandDesign(Command):
             return
         util.error(f"Didn't understand +plusarg: '{plusarg}'")
 
-    def resolve_target(self, target):
+    def resolve_target(self, target, no_recursion=False):
         util.debug("Entered resolve_target(%s)" % (target))
         self.target = target
         m = re.match(r'.*\/([\w\_]+)$', self.target)
@@ -259,6 +264,7 @@ class CommandDesign(Command):
                             found_any_target = True
                             line = m.group(2) # we trim down line and let lower code parse the rest
                             util.debug("Found %s at %s:%d" % (t, deps_file, line_number))
+                            if no_recursion: return True
                         else:
                             continue # it's the start of a DEP, but not ours
                     else:
@@ -273,6 +279,21 @@ class CommandDesign(Command):
                             if m.group(1) in self.config['vars']:
                                 line = re.sub(r'\$%s' % (m.group(1)), self.config['vars'][m.group(1)], line)
                             m = re.search(r'\$\w+', line)
+
+                    # check for conditional inclusions based on defines
+                    m = re.match(r'^\s*(\w+)\s+\?([^\:]*)\s*(\:)?\s*(.*)*$', line)
+                    if m:
+                        v = m.group(1)
+                        l1 = m.group(2)
+                        l2 = m.group(3)
+                        line = l1 if v in self.defines else l2
+                        if line == None: line = ""
+
+                    # check for setting an EDA argument
+                    m = re.match(r'^\s*\-\-([\w\-]+)\s*', line)
+                    if m:
+                        Command.process_tokens(self, line.split())
+                        continue
 
                     for dep in line.split():
                         # see if this is a generated source file
@@ -296,12 +317,6 @@ class CommandDesign(Command):
                         if m:
                             util.debug("Got plusarg %s for target %s at %s:%d" % (dep, t, deps_file, line_number))
                             self.process_plusarg(dep)
-                            continue
-
-                        # check for setting an EDA argument
-                        m = re.match(r'^\-\-(\w+)\S*$', dep)
-                        if m:
-                            Command.process_tokens(self, [dep])
                             continue
 
                         # this dep hasn't been dealt with above, which are rare things, do it the normal way
@@ -392,7 +407,8 @@ class CommandDesign(Command):
                 if self.args['top'] == "":
                     # if we haven't yet been given a top, or inferred one, we take the first one we get
                     self.args['top'] = self.get_top_name(file_abspath)
-                    util.info("Inferred arg['top']='%s'" % (self.args['top']))
+                    self.args['top-path'] = file_abspath
+                    util.info(f"Inferred --top {self.args['top']} {file_abspath}")
                 tokens.pop(0)
                 continue
             # we appear to be dealing with a target name which needs to be resolved (usually recursively)
@@ -404,7 +420,8 @@ class CommandDesign(Command):
                 if self.args['top'] == "":
                     # if we haven't yet been given a top, or inferred one, we take the first one we get
                     self.args['top'] = self.get_top_name(target_name)
-                    util.info("Inferred arg['top']='%s'" % (self.args['top']))
+                    self.args['top-path'] = target_name
+                    util.info(f"Inferred --top {self.args['top']} {target_name}")
                 tokens.pop(0)
                 continue
             # we were unable to figure out what this command line token is for...
@@ -425,9 +442,9 @@ class CommandSim(CommandDesign):
         self.stop_after_compile = False
 
     def process_tokens(self, tokens, process_all=True):
+        self.defines['SIMULATION'] = None
         CommandDesign.process_tokens(self, tokens, process_all)
         # add defines for this job type
-        self.defines['SIMULATION'] = None
         if (self.args['top'] != ""):
             # create our work dir
             self.create_work_dir()
@@ -449,9 +466,9 @@ class CommandSynth(CommandDesign):
         self.args['odelay-ns'] = 2
 
     def process_tokens(self, tokens, process_all=True):
+        self.defines['SYNTHESIS'] = None
         CommandDesign.process_tokens(self, tokens, process_all)
         # add defines for this job type
-        self.defines['SYNTHESIS'] = None
         if (self.args['top'] != ""):
             # create our work dir
             self.create_work_dir()
@@ -460,9 +477,19 @@ class CommandSynth(CommandDesign):
 class CommandProj(CommandDesign):
     def __init__(self, config):
         CommandDesign.__init__(self, config, "proj")
-        self.args['clock-ns'] = 5 # 200Mhz
-        self.args['idelay-ns'] = 2
-        self.args['odelay-ns'] = 2
+
+    def process_tokens(self, tokens, process_all=True):
+        CommandDesign.process_tokens(self, tokens, process_all)
+        # add defines for this job type
+        if (self.args['top'] != ""):
+            # create our work dir
+            self.create_work_dir()
+            self.do_it()
+
+class CommandBuild(CommandDesign):
+    def __init__(self, config):
+        CommandDesign.__init__(self, config, "build")
+        self.args['build-script'] = "build.tcl"
 
     def process_tokens(self, tokens, process_all=True):
         CommandDesign.process_tokens(self, tokens, process_all)
@@ -475,14 +502,14 @@ class CommandProj(CommandDesign):
 _threads_start = 0
 _threads_done = 0
 
-class CommandMultiWorker(threading.Thread):
+class CommandParallelWorker(threading.Thread):
     def __init__(self, n, work_queue, done_queue):
         threading.Thread.__init__(self)
         self.n = n
         self.work_queue = work_queue
         self.done_queue = done_queue
         self.stop_request = False
-        self.target = ""
+        self.job_name = ""
         self.proc = None
         self.pid = None
         self.last_timer_debug = 0
@@ -493,10 +520,10 @@ class CommandMultiWorker(threading.Thread):
         global _threads_done
         while True:
             # Get the work from the queue and expand the tuple
-            i, command_list, target, work_dir = self.work_queue.get()
-            self.target = target
+            i, command_list, job_name, work_dir = self.work_queue.get()
+            self.job_name = job_name
             try:
-                util.debug(f"WORKER_{self.n}: Running job {i}: {target}")
+                util.debug(f"WORKER_{self.n}: Running job {i}: {job_name}")
                 PIPE=subprocess.PIPE
                 STDOUT=subprocess.STDOUT
                 util.debug(f"WORKER_{self.n}: Calling Popen")
@@ -530,13 +557,15 @@ class CommandMultiWorker(threading.Thread):
                             stdout, stderr = proc.communicate(timeout=0.2) # for completeness, in case we ever pipe/search stdout/stderr
                             util.debug(f"WORKER_{self.n}: got: \n*** stdout:\n{stdout}\n*** stderr:{stderr}")
                         except subprocess.TimeoutExpired:
-                            util.debug(f"WORKER_{self.n}: timeout waiting for comminicate after terminate, trying again")
+                            util.debug(f"WORKER_{self.n}: timeout waiting for comminicate after terminate")
+                        except:
+                            pass
                         util.debug(f"WORKER_{self.n}: proc poll returns is now {proc.poll()}")
 
                 util.debug(f"WORKER_{self.n}: -- out of while loop")
                 self.pid = None
                 self.proc = None
-                self.target = "<idle>"
+                self.job_name = "<idle>"
                 util.debug(f"WORKER_{self.n}: proc poll returns is now {proc.poll()}")
                 try:
                     util.debug(f"WORKER_{self.n}: Calling proc.communicate one last time")
@@ -544,9 +573,11 @@ class CommandMultiWorker(threading.Thread):
                     util.debug(f"WORKER_{self.n}: got: \n*** stdout:\n{stdout}\n*** stderr:{stderr}")
                 except subprocess.TimeoutExpired:
                     util.debug(f"WORKER_{self.n}: timeout waiting for communicate after loop?")
+                except:
+                    pass
                 return_code = proc.poll()
-                util.debug(f"WORKER_{self.n}: Finished job {i}: {target} with return code {return_code}")
-                self.done_queue.put((i, target, return_code))
+                util.debug(f"WORKER_{self.n}: Finished job {i}: {job_name} with return code {return_code}")
+                self.done_queue.put((i, job_name, return_code))
             finally:
                 util.debug(f"WORKER_{self.n}: -- in finally block")
                 self.work_queue.task_done()
@@ -554,9 +585,9 @@ class CommandMultiWorker(threading.Thread):
 
 tools_loaded = []
 
-class CommandMulti(Command):
-    def __init__(self, config):
-        Command.__init__(self, config, "multi")
+class CommandParallel(Command):
+    def __init__(self, config, command_name):
+        Command.__init__(self, config, command_name)
         self.args['parallel'] = 1
         self.worker_threads = []
 
@@ -567,7 +598,7 @@ class CommandMulti(Command):
         util.warning(f"Need to shut down {_threads_start-_threads_done} worker threads...")
         for w in self.worker_threads:
             if w.proc:
-                util.warning(f"Requesting stop of PID {w.pid}: {w.target}")
+                util.warning(f"Requesting stop of PID {w.pid}: {w.job_name}")
                 w.stop_request = True
         for i in range(10):
             util.debug(f"Threads done/started: {_threads_done}/{_threads_start}")
@@ -611,6 +642,182 @@ class CommandMulti(Command):
         util.stop_log()
         subprocess.Popen(['stty', 'sane']).wait()
 
+    def run_jobs(self, command):
+        # this is where we actually run the jobs.  it's a messy piece of code and prob could use refactoring
+        # but the goal was to share as much as possible (job start, end, pass/fail judgement, etc) while
+        # supporting various mode combinations (parallel mode, verbose mode, fancy mode, etc) and keeping the
+        # UI output functional and awesome sauce
+
+        # walk targets to find the longest name, for display reasons
+        longest_job_name = 0
+        total_jobs = len(self.jobs)
+        for i in range(total_jobs):
+            l = len(self.jobs[i]['name'])
+            if l>longest_job_name: longest_job_name = l
+
+        run_parallel = self.args['parallel'] > 1
+
+        # figure out the width to print various numbers
+        jobs_digits = len(f"{total_jobs}")
+        jobs_fmt = "%%%dd" % jobs_digits # ugh, for printing out a number with N digits
+
+        # run the jobs!
+        running_jobs = {}
+        passed_jobs = []
+        failed_jobs = []
+        workers = []
+        jobs_complete = 0
+        jobs_launched = 0
+        num_parallel = min(len(self.jobs), self.args['parallel'])
+        # 16 should really be the size of window or ?
+        (columns,lines) = shutil.get_terminal_size()
+        # we will enter fancy mode if we are parallel and we can leave 6 lines of regular scrolling output
+        fancy_mode = util.args['fancy'] and (num_parallel > 1) and (num_parallel <= (lines-6))
+        multi_cwd = util.getcwd()+os.sep
+
+        if run_parallel:
+            # we are doing this multi-threaded
+            util.info(f"Parallel: Running multi-threaded, starting {num_parallel} workers")
+            work_queue = queue.Queue()
+            done_queue = queue.Queue()
+            for x in range(num_parallel):
+                worker = CommandParallelWorker(x, work_queue, done_queue)
+                # Setting daemon to True will let the main thread exit even though the workers are blocking
+                worker.daemon = True
+                worker.start()
+                self.worker_threads.append(worker)
+                workers.append(x)
+            if fancy_mode:
+                # in fancy mode, we will take the bottom num_parallel lines to show state of workers
+                util.fancy_start(fancy_lines=num_parallel)
+                for x in range(num_parallel):
+                    util.fancy_print(f"Starting worker {x}", x)
+
+        while len(self.jobs) or len(running_jobs.items()):
+            job_done = False
+            job_done_quiet = False
+            anything_done = False
+
+            def sprint_job_line(job_number=0, job_name="", final=False, hide_stats=False):
+                return (f"INFO: [EDA] " +
+                        util.string_or_space(f"[job {jobs_fmt%job_number}/{jobs_fmt%total_jobs} ", final) +
+                        util.string_or_space(f"| pass ", hide_stats or final) +
+                        util.string_or_space(f"{jobs_fmt%len(passed_jobs)}/{jobs_fmt%jobs_complete} ", hide_stats) +
+                        util.string_or_space(f"@ {(100*(jobs_complete))/total_jobs:5.1f}%", hide_stats or final) +
+                        util.string_or_space(f"] ", final) +
+                        f"{command} {(job_name+' ').ljust(longest_job_name+3,'.')}")
+
+            # for any kind of run (parallel or not, fancy or not, verbose or not) ... can we launch a job?
+            if len(self.jobs) and (len(running_jobs.items()) < num_parallel):
+                # we are launching a job
+                jobs_launched += 1
+                anything_done = True
+                job = self.jobs.pop(0)
+                if job['name'].startswith(multi_cwd): job['name'] = job['name'][len(multi_cwd):]
+                # in all but fancy mode, we will print this text at the launch of a job.  It may get a newline below
+                job_text = sprint_job_line(jobs_launched, job['name'], hide_stats=run_parallel)
+                command_list = job['command_list']
+
+                if run_parallel:
+                    # multithreaded job launch: add to queue
+                    worker = workers.pop(0) # we don't actually know which thread will pick up, but GUI will be consistent
+                    running_jobs[str(jobs_launched)] = { 'name' : job['name'],
+                                                         'number' : jobs_launched,
+                                                         'worker' : worker,
+                                                         'start_time' : time.time(),
+                                                         'update_time' : time.time()}
+                    work_queue.put((jobs_launched, command_list, job['name'], cwd))
+                    suffix = "<START>"
+                    if fancy_mode:
+                        util.fancy_print(job_text+suffix, worker)
+                    else:
+                        # if we aren't in fancy mode, we will print a START line, periodic RUNNING lines, and PASS/FAIL line per-job
+                        if len(failed_jobs): util.print_orange(job_text+util.string_yellow+suffix)
+                        else:                util.print_yellow(job_text+util.string_yellow+suffix)
+                else:
+                    # single-threaded job launch, we are going to print out job info as we start each job... no newline
+                    # since non-verbose silences the job and prints only <PASS>/<FAIL> after the trailing "..." we leave here
+                    if len(failed_jobs): util.print_orange(job_text, end="")
+                    else:                util.print_yellow(job_text, end="")
+                    job_done_number = jobs_launched
+                    job_done_name = job['name']
+                    job_start_time = time.time()
+                    if util.args['verbose']:
+                        # previous status line gets a \n, then job is run passing stdout/err, then print 'job_text' again with pass/fail
+                        util.print_green("")
+                        # run job, sending output to the console
+                        _, _, job_done_return_code = self.exec(cwd, command_list, background=False, stop_on_error=False, quiet=False)
+                        # reprint the job text previously printed before running job(and given "\n" after the trailing "...")
+                        #job_done_text = job_text
+                    else:
+                        # run job, swallowing output (hope you have a logfile)
+                        _, _, job_done_return_code = self.exec(cwd, command_list, background=True, stop_on_error=False, quiet=True)
+                        job_done_quiet = True # in this case, we have the job start text (trailing "...", no newline) printed
+                    job_done = True
+                    job_done_run_time = time.time() - job_start_time
+
+            if run_parallel:
+                # parallel run, check for completed job
+                if done_queue.qsize():
+                    # we're collecting a finished job from a worker thread.  note we will only reap one job per iter of the big
+                    # loop, so as to share job completion code at the bottom
+                    anything_done = True
+                    job_done = True
+                    job_done_number, job_done_name, job_done_return_code = done_queue.get()
+                    t = running_jobs[str(job_done_number)]
+                    # in fancy mode, we need to clear the worker line related to this job.
+                    if fancy_mode:
+                        util.fancy_print(f"INFO: [EDA] Parallel: Worker Idle ...", t['worker'])
+                    job_done_run_time = time.time() - t['start_time']
+                    util.debug(f"removing job #{job_done_number} from running jobs")
+                    del running_jobs[str(job_done_number)]
+                    workers.append(t['worker'])
+
+            if run_parallel:
+                # parallel run, update the UI on job status
+                for _,t in running_jobs.items():
+                    if (fancy_mode or (time.time() - t['update_time']) > 30):
+                        t['update_time'] = time.time()
+                        job_text = sprint_job_line(t['number'], t['name'], hide_stats=True)
+                        suffix = f"<RUNNING: {util.sprint_time(time.time() - t['start_time'])}>"
+                        if fancy_mode:
+                            util.fancy_print(f"{job_text}{suffix}", t['worker'])
+                        else:
+                            if len(failed_jobs): util.print_orange(job_text+util.string_yellow+suffix)
+                            else:                util.print_yellow(job_text+util.string_yellow+suffix)
+
+            # shared job completion code
+            # single or multi-threaded, we can arrive here to harvest <= 1 jobs, and need {job, return_code} valid, and
+            # we expect the start of a status line to have been printed, ready for pass/fail
+            if job_done:
+                jobs_complete += 1
+                if (job_done_return_code):
+                    # embed the color code, to change color of pass/fail during the util.print_orange/yellow below
+                    suffix = f"{util.string_red}<FAIL: {util.sprint_time(job_done_run_time)}>"
+                    failed_jobs.append(job_done_name)
+                else:
+                    suffix = f"{util.string_green}<PASS: {util.sprint_time(job_done_run_time)}>"
+                    passed_jobs.append(job_done_name)
+                # we want to print in one shot, because in fancy modes that's all that we're allowed
+                job_done_text = "" if job_done_quiet else sprint_job_line(job_done_number, job_done_name)
+                if len(failed_jobs): util.print_orange(f"{job_done_text}{suffix}")
+                else:                util.print_yellow(f"{job_done_text}{suffix}")
+
+            if not anything_done:
+                time.sleep(0.25) # if nothing happens for an iteration, chill out a bit
+
+        if total_jobs:
+            emoji = "< :) >" if (len(passed_jobs) == total_jobs) else "< :( >"
+            util.info(sprint_job_line(final=True,job_name="jobs passed")+emoji, start="")
+        else:
+            util.info(f"Parallel: <No jobs found>")
+        util.fancy_stop()
+
+
+class CommandMulti(CommandParallel):
+    def __init__(self, config):
+        CommandParallel.__init__(self, config, "multi")
+
     def resolve_target(self, base_path, target, command, level=0):
         util.debug(f"ENTER RESOLVE_TARGET L{level} base_path={base_path}, target={target}, command={command}")
         target_path_parts = target.split("/")
@@ -627,7 +834,7 @@ class CommandMulti(Command):
                 for line in f:
                     line_number += 1
                     # look for a pragma before clearing comments
-                    m = re.match(r'^([^\#]*)\#eda_multi ignore (\S+).*$', line)
+                    m = re.match(r'^([^\#]*)\#\s*eda_multi\s+ignore\s+(\S*).*$', line)
                     if m:
                         ignore_target = m.group(1)
                         ignore_command = m.group(2)
@@ -735,185 +942,88 @@ class CommandMulti(Command):
             util.info("", start="")
         else:
             util.info(" , ".join(self.targets), start="")
+        util.debug(f"Multi: converting list of targets into list of jobs")
+        self.jobs = []
+        for target in self.targets:
+            self.jobs.append({'name' : target,
+                              'command_list' : (['python3', os.path.realpath(__file__), command, target] + arg_tokens)})
+        self.run_jobs(command)
 
-        self.run_targets(command, arg_tokens)
 
-    def run_targets(self, command, arg_tokens):
-        # this is where we actually run the jobs.  it's a messy piece of code and prob could use refactoring
-        # but the goal was to share as much as possible (job start, end, pass/fail judgement, etc) while
-        # supporting various mode combinations (parallel mode, verbose mode, fancy mode, etc) and keeping the
-        # UI output functional and awesome sauce
+class CommandSweep(CommandDesign, CommandParallel):
+    def __init__(self, config):
+        CommandDesign.__init__(self, config, "sweep")
+        CommandParallel.__init__(self, config, "sweep")
 
-        # walk targets to find the longest name, for display reasons
-        longest_target = 0
-        num_targets = len(self.targets)
-        for i in range(num_targets):
-            l = len(self.targets[i])
-            if l>longest_target: longest_target = l
+    def process_tokens(self, tokens, process_all=True):
+        # multi is special in the way it handles tokens, due to most of them being processed by a sub instance
+        sweep_axis_list = []
+        command = ""
+        target = ""
+        arg_tokens = []
+        while len(tokens):
+            token = tokens.pop(0)
+            if token in config['command_handler']:
+                if command == "":
+                    command = token
+                    continue
+            if token == "--parallel":
+                v = tokens.pop(0)
+                if ((not v.isdigit()) or (int(v) < 1) or (int(v) > 256)):
+                    util.error("Need an integer between 1 and 256 after --parallel")
+                self.args['parallel'] = int(v)
+                continue
+            m = re.match(r'(\S+)\=\((\d+)\,(\d+)(,(\d+))?\)', token)
+            if m:
+                sweep_axis = { 'key' : m.group(1),
+                               'from' : float(m.group(2)),
+                               'to' : float(m.group(3)),
+                               'step' : float(m.group(5)) if m.group(4) != None else 1.0 }
+                util.debug(f"Sweep axis: {sweep_axis['key']} = {sweep_axis['from']} to {sweep_axis['to']} step {sweep_axis['step']}")
+                sweep_axis_list.append(sweep_axis)
+                continue
+            if token.startswith('--') or token.startswith('+'):
+                arg_tokens.append(token)
+                continue
+            if self.resolve_target(token, no_recursion=True):
+                if target != "":
+                    util.error(f"Sweep can only take one target, already got {target}, now getting {token}")
+                target = token
+                continue
+            util.error(f"Sweep doesn't know what to do with arg '{token}'")
+        if command == "": util.error(f"Didn't get a command after 'sweep'!")
 
-        run_parallel = self.args['parallel'] > 1
+        # now we need to expand the target list
+        util.debug(f"Sweep: command:    '{command}'")
+        util.debug(f"Sweep: target:     '{target}'")
+        util.debug(f"Sweep: arg_tokens: '{arg_tokens}'")
 
-        # figure out the width to print various numbers
-        jobs_digits = len(f"{num_targets}")
-        jobs_fmt = "%%%dd" % jobs_digits # ugh, for printing out a number with N digits
+        # now create the list of jobs, support one axis
+        self.jobs = []
+        self.expand_sweep_axis(command, target, arg_tokens, sweep_axis_list)
+        self.run_jobs(command)
 
-        # run the jobs!
-        running_targets = {}
-        passed_targets = []
-        failed_targets = []
-        workers = []
-        jobs_complete = 0
-        jobs_launched = 0
-        num_parallel = min(len(self.targets), self.args['parallel'])
-        # 16 should really be the size of window or ?
-        (columns,lines) = shutil.get_terminal_size()
-        # we will enter fancy mode if we are parallel and we can leave 6 lines of regular scrolling output
-        fancy_mode = util.args['fancy'] and (num_parallel > 1) and (num_parallel <= (lines-6))
-        multi_cwd = util.getcwd()+os.sep
-
-        if run_parallel:
-            # we are doing this multi-threaded
-            util.info(f"Multi: Running multi-threaded, starting {num_parallel} workers")
-            work_queue = queue.Queue()
-            done_queue = queue.Queue()
-            for x in range(num_parallel):
-                worker = CommandMultiWorker(x, work_queue, done_queue)
-                # Setting daemon to True will let the main thread exit even though the workers are blocking
-                worker.daemon = True
-                worker.start()
-                self.worker_threads.append(worker)
-                workers.append(x)
-            if fancy_mode:
-                # in fancy mode, we will take the bottom num_parallel lines to show state of workers
-                util.fancy_start(fancy_lines=num_parallel)
-                for x in range(num_parallel):
-                    util.fancy_print(f"Starting worker {x}", x)
-
-        while len(self.targets) or len(running_targets.items()):
-            job_done = False
-            job_done_quiet = False
-            anything_done = False
-
-            def sprint_job_line(job=0, target="", final=False, hide_stats=False):
-                return (f"INFO: [EDA] " +
-                        util.string_or_space(f"[job {jobs_fmt%job}/{jobs_fmt%num_targets} ", final) +
-                        util.string_or_space(f"| pass ", hide_stats or final) +
-                        util.string_or_space(f"{jobs_fmt%len(passed_targets)}/{jobs_fmt%jobs_complete} ", hide_stats) +
-                        util.string_or_space(f"@ {(100*(jobs_complete))/num_targets:5.1f}%", hide_stats or final) +
-                        util.string_or_space(f"] ", final) +
-                        f"{command} {(target+' ').ljust(longest_target+3,'.')}")
-
-            # for any kind of run (parallel or not, fancy or not, verbose or not) ... can we launch a job?
-            if len(self.targets) and (len(running_targets.items()) < num_parallel):
-                # we are launching a job
-                jobs_launched += 1
-                anything_done = True
-                target = self.targets.pop(0)
-                if target.startswith(multi_cwd): target = target[len(multi_cwd):]
-                # in all but fancy mode, we will print this text at the launch of a job.  It may get a newline below
-                job_text = sprint_job_line(jobs_launched, target, hide_stats=run_parallel)
-                command_list = [ 'python3', os.path.realpath(__file__)]
-                for tool in tools_loaded:
-                    command_list.extend(['--tool', tool])
-                command_list.append(command)
-                command_list.append(target)
-                command_list.extend(arg_tokens)
-
-                if run_parallel:
-                    # multithreaded job launch: add to queue
-                    worker = workers.pop(0) # we don't actually know which thread will pick up, but GUI will be consistent
-                    running_targets[str(jobs_launched)] = { 'target' : target,
-                                                            'job_number' : jobs_launched,
-                                                            'worker' : worker,
-                                                            'start_time' : time.time(),
-                                                            'update_time' : time.time()}
-                    work_queue.put((jobs_launched, command_list, target, cwd))
-                    suffix = "<START>"
-                    if fancy_mode:
-                        util.fancy_print(job_text+suffix, worker)
-                    else:
-                        # if we aren't in fancy mode, we will print a START line, periodic RUNNING lines, and PASS/FAIL line per-job
-                        if len(failed_targets): util.print_orange(job_text+util.string_yellow+suffix)
-                        else:                   util.print_yellow(job_text+util.string_yellow+suffix)
-                else:
-                    # single-threaded job launch, we are going to print out job info as we start each job... no newline
-                    # since non-verbose silences the job and prints only <PASS>/<FAIL> after the trailing "..." we leave here
-                    if len(failed_targets): util.print_orange(job_text, end="")
-                    else:                   util.print_yellow(job_text, end="")
-                    job_done_number = jobs_launched
-                    job_done_target = target
-                    job_start_time = time.time()
-                    if util.args['verbose']:
-                        # previous status line gets a \n, then job is run passing stdout/err, then print 'job_text' again with pass/fail
-                        util.print_green("")
-                        # run job, sending output to the console
-                        _, _, job_done_return_code = self.exec(cwd, command_list, background=False, stop_on_error=False, quiet=False)
-                        # reprint the job text previously printed before running job(and given "\n" after the trailing "...")
-                        #job_done_text = job_text
-                    else:
-                        # run job, swallowing output (hope you have a logfile)
-                        _, _, job_done_return_code = self.exec(cwd, command_list, background=True, stop_on_error=False, quiet=True)
-                        job_done_quiet = True # in this case, we have the job start text (trailing "...", no newline) printed
-                    job_done = True
-                    job_done_run_time = time.time() - job_start_time
-
-            if run_parallel:
-                # parallel run, check for completed job
-                if done_queue.qsize():
-                    # we're collecting a finished job from a worker thread.  note we will only reap one job per iter of the big
-                    # loop, so as to share job completion code at the bottom
-                    anything_done = True
-                    job_done = True
-                    job_done_number, job_done_target, job_done_return_code = done_queue.get()
-                    t = running_targets[str(job_done_number)]
-                    # in fancy mode, we need to clear the worker line related to this job.
-                    if fancy_mode:
-                        util.fancy_print(f"INFO: [EDA] Multi: Worker Idle ...", t['worker'])
-                    job_done_run_time = time.time() - t['start_time']
-                    util.debug(f"removing job #{job_done_number} from running targets")
-                    del running_targets[str(job_done_number)]
-                    workers.append(t['worker'])
-
-            if run_parallel:
-                # parallel run, update the UI on job status
-                for _,t in running_targets.items():
-                    if (fancy_mode or (time.time() - t['update_time']) > 30):
-                        t['update_time'] = time.time()
-                        job_text = sprint_job_line(t['job_number'], t['target'], hide_stats=True)
-                        suffix = f"<RUNNING: {util.sprint_time(time.time() - t['start_time'])}>"
-                        if fancy_mode:
-                            util.fancy_print(f"{job_text}{suffix}", t['worker'])
-                        else:
-                            if len(failed_targets): util.print_orange(job_text+util.string_yellow+suffix)
-                            else:                   util.print_yellow(job_text+util.string_yellow+suffix)
-
-            # shared job completion code
-            # single or multi-threaded, we can arrive here to harvest <= 1 jobs, and need {target, return_code} valid, and
-            # we expect the start of a status line to have been printed, ready for pass/fail
-            if job_done:
-                jobs_complete += 1
-                if (job_done_return_code):
-                    # embed the color code, to change color of pass/fail during the util.print_orange/yellow below
-                    suffix = f"{util.string_red}<FAIL: {util.sprint_time(job_done_run_time)}>"
-                    failed_targets.append(job_done_target)
-                else:
-                    suffix = f"{util.string_green}<PASS: {util.sprint_time(job_done_run_time)}>"
-                    passed_targets.append(job_done_target)
-                # we want to print in one shot, because in fancy modes that's all that we're allowed
-                job_done_text = "" if job_done_quiet else sprint_job_line(job_done_number, job_done_target)
-                if len(failed_targets): util.print_orange(f"{job_done_text}{suffix}")
-                else:                   util.print_yellow(f"{job_done_text}{suffix}")
-
-            if not anything_done:
-                time.sleep(0.25) # if nothing happens for an iteration, chill out a bit
-
-        if num_targets:
-            emoji = "< :) >" if (len(passed_targets) == num_targets) else "< :( >"
-            util.info(sprint_job_line(final=True,target="jobs passed")+emoji, start="")
-        else:
-            util.info(f"Multi: <No targets found>")
-        util.fancy_stop()
-
+    def expand_sweep_axis(self, command, target, arg_tokens, sweep_axis_list, sweep_string=""):
+        util.debug(f"Entering expand_sweep_axis: command={command}, target={target}, arg_tokens={arg_tokens}, sweep_axis_list={sweep_axis_list}")
+        if len(sweep_axis_list) == 0:
+            # we aren't sweeping anything, create one job
+            snapshot_name = target.replace('../','').replace('/','_') + sweep_string
+            self.jobs.append({ 'name' : snapshot_name,
+                               'command_list' : (['python3', os.path.realpath(__file__), command, target, '--job-name', snapshot_name] + arg_tokens)})
+            return
+        sweep_axis = sweep_axis_list[0]
+        v = sweep_axis['from']
+        while v < (sweep_axis['to'] + (sweep_axis['step']/2)):
+            this_arg_tokens = []
+            for a in arg_tokens:
+                this_arg_tokens.append(a.replace(sweep_axis['key'], f"{v}"))
+            next_sweep_axis_list = []
+            if len(sweep_axis_list)>1:
+                next_sweep_axis_list = sweep_axis_list[1:]
+            v_string = f"{v}".replace('.','p')
+            if v_string.endswith('p0'): v_string=v_string.replace('p0','')
+            self.expand_sweep_axis(command, target, this_arg_tokens, next_sweep_axis_list, sweep_string+f"_{sweep_axis['key']}_{v_string}")
+            v += sweep_axis['step']
 
 class CommandFList(CommandDesign):
     def __init__(self, config):
@@ -932,16 +1042,22 @@ class CommandFList(CommandDesign):
         self.args['single-quote-define'] = False
         self.args['quote-define'] = True
         self.args['xilinx'] = False # we don't want --xilinx to error, but it doesn't do anything much
+        self.args['build-script'] = "" # we don't want this to error either
 
     def process_tokens(self, tokens, process_all=True):
         CommandDesign.process_tokens(self, tokens, process_all)
+        self.do_it()
+
+    def do_it(self):
+        # add defines for this job
+        self.set_tool_defines()
         if (self.args['top'] != ""):
             if os.path.exists(self.args['out']):
                 if self.args['force']:
                     util.info(f"Removing existing {self.args['out']}")
                     os.remove(self.args['out'])
                 else:
-                    util.error(f"Not overwriting {self.args['out']} unless you specify -force")
+                    util.error(f"Not overwriting {self.args['out']} unless you specify --force")
             util.debug(f"Opening {self.args['out']} for writing")
             with open( self.args['out'] , 'w' ) as fo:
                 if self.args['emit-define']:
@@ -996,7 +1112,7 @@ class CommandWaves(CommandDesign):
                 wave_dirs.append(self.args['eda-dir'])
             if (len(wave_dirs) == 0):
                 wave_dirs.append(self.args['.'])
-            all_wave_files = []
+            all_files = []
             for d in wave_dirs:
                 util.info(f"Looking for wavedumps below: {d}")
                 for root, dirs, files in os.walk(d):
@@ -1004,11 +1120,12 @@ class CommandWaves(CommandDesign):
                         for e in [ '.wdb', '.vcd' ]:
                             if f.endswith(e):
                                 util.info(f"Found wave file: {os.path.join(root,f)}")
-                                all_wave_files.append(os.path.join(root,f))
-            if len(all_wave_files) > 1:
-                all_wave_files.sort(key=lambda f: os.path.getmtime(f))
-            if len(all_wave_files):
-                wave_file = all_wave_files[-1]
+                                all_files.append(os.path.join(root,f))
+            if len(all_files) > 1:
+                all_files.sort(key=lambda f: os.path.getmtime(f))
+                util.info(f"Choosing: {self.args['file']} (newest)")
+            if len(all_files):
+                wave_file = all_files[-1]
             else:
                 util.error(f"Couldn't find any wave files below: {','.join(wave_dirs)}")
 
@@ -1031,6 +1148,14 @@ class CommandUpload(CommandDesign):
         self.create_work_dir()
         self.do_it()
 
+class CommandOpen(CommandDesign):
+    def __init__(self, config):
+        Command.__init__(self, config, "open")
+
+    def process_tokens(self, tokens, process_all=True):
+        Command.process_tokens(self, tokens, process_all)
+        self.do_it()
+
 class ToolVivado:
     def __init__(self):
         self.vivado_year = None
@@ -1045,13 +1170,17 @@ class ToolVivado:
         if vivado_path == None:
             util.error("Vivado not in path, need to setup (i.e. source /opt/Xilinx/Vivado/2022.2/settings64.sh")
         util.debug("vivado_path = %s" % vivado_path)
-        m = re.search(r'(\d\d\d\d)\.(\d+)', vivado_path)
+        m = re.search(r'(\d\d\d\d)\.(\d)', vivado_path)
         if m:
             self.vivado_year = int(m.group(1))
             self.vivado_release = int(m.group(2))
+            self.vivado_version = float(m.group(1)+"."+m.group(2))
             return
-        util.error("Vivado path doesn't specificy version, expecting (dddd.dd)")
+        util.error("Vivado path doesn't specificy version, expecting (dddd.d)")
 
+    # we wait to call this as part of do_it because we only want to run all this after all options
+    # have been processed, as things like --xilinx will affect the defines.  Maybe it should be
+    # broken into a tool vs library phase, but likely command line opts can also affect tools...
     def set_tool_defines(self):
         # Will only be called from an object which also inherits from CommandDesign, i.e. has self.defines
         self.get_versions()
@@ -1059,8 +1188,26 @@ class ToolVivado:
         self.defines['OC_TOOL_VIVADO_%4d_%d' % (self.vivado_year, self.vivado_release)] = None
         if self.args['xilinx']:
             self.defines['OC_LIBRARY_ULTRASCALE_PLUS'] = None
+            self.defines['OC_LIBRARY'] = "1"
         else:
             self.defines['OC_LIBRARY_BEHAVIORAL'] = None
+            self.defines['OC_LIBRARY'] = "0"
+        # Code can be conditional on Vivado versions and often keys of "X or newer", "X or older", ...
+        if (self.vivado_version <= 2021.1): self.defines['OC_TOOL_VIVADO_2021_1_OR_OLDER'] = None
+        if (self.vivado_version <= 2021.2): self.defines['OC_TOOL_VIVADO_2021_2_OR_OLDER'] = None
+        if (self.vivado_version <= 2022.1): self.defines['OC_TOOL_VIVADO_2022_1_OR_OLDER'] = None
+        if (self.vivado_version <= 2022.2): self.defines['OC_TOOL_VIVADO_2022_2_OR_OLDER'] = None
+        if (self.vivado_version <= 2023.1): self.defines['OC_TOOL_VIVADO_2023_1_OR_OLDER'] = None
+        if (self.vivado_version <= 2023.2): self.defines['OC_TOOL_VIVADO_2023_2_OR_OLDER'] = None
+        if (self.vivado_version >= 2021.1): self.defines['OC_TOOL_VIVADO_2021_1_OR_NEWER'] = None
+        if (self.vivado_version >= 2021.2): self.defines['OC_TOOL_VIVADO_2021_2_OR_NEWER'] = None
+        if (self.vivado_version >= 2022.1): self.defines['OC_TOOL_VIVADO_2022_1_OR_NEWER'] = None
+        if (self.vivado_version >= 2022.2): self.defines['OC_TOOL_VIVADO_2022_2_OR_NEWER'] = None
+        if (self.vivado_version >= 2023.1): self.defines['OC_TOOL_VIVADO_2023_1_OR_NEWER'] = None
+        if (self.vivado_version >= 2023.2): self.defines['OC_TOOL_VIVADO_2023_2_OR_NEWER'] = None
+        # Our first tool workaround.  Older Vivado's don't correctly compare types in synthesis (sim seems OK, argh)
+        if (self.vivado_version < 2023.2): self.defines['OC_TOOL_BROKEN_TYPE_COMPARISON'] = None
+        util.debug(f"Setup tool defines: {self.defines}")
 
 class CommandSimVivado(CommandSim, ToolVivado):
     def __init__(self, config):
@@ -1086,10 +1233,9 @@ class CommandSimVivado(CommandSim, ToolVivado):
             for key in self.defines.keys():
                 value = self.defines[key]
                 command_list.append('-d')
-                if value == None:
-                    command_list.append(key)
-                else:
-                    command_list.append("\'%s=%s\'" % (key, value))
+                if value == None:    command_list.append(key)
+                elif "\'" in value:  command_list.append("\"%s=%s\"" % (key, value))
+                else:                command_list.append("\'%s=%s\'" % (key, value))
             command_list += self.files_v
             self.exec(self.args['work-dir'], command_list)
 
@@ -1104,10 +1250,9 @@ class CommandSimVivado(CommandSim, ToolVivado):
             for key in self.defines.keys():
                 value = self.defines[key]
                 command_list.append('-d')
-                if value == None:
-                    command_list.append(key)
-                else:
-                    command_list.append("\'%s=%s\'" % (key, value))
+                if value == None:    command_list.append(key)
+                elif "\'" in value:  command_list.append("\"%s=%s\"" % (key, value))
+                else:                command_list.append("\'%s=%s\'" % (key, value))
             command_list += self.files_sv
             self.exec(self.args['work-dir'], command_list)
 
@@ -1186,8 +1331,8 @@ class CommandSynthVivado(CommandSynth, ToolVivado):
         if len(self.incdirs):
             incdirs = " -include_dirs "+";".join(self.incdirs)
         flatten = ""
-        if self.args['flatten-all']:    flatten = " -flatten_hierarchy full"
-        elif self.args['flatten-none']: flatten = " -flatten_hierarchy none"
+        if self.args['flatten-all']:    flatten = "-flatten_hierarchy full"
+        elif self.args['flatten-none']: flatten = "-flatten_hierarchy none"
         with open( tcl_file, 'w' ) as fo:
             for f in self.files_v:     print(f"read_verilog {f}", file=fo)
             for f in self.files_sv:    print(f"read_verilog -sv {f}", file=fo)
@@ -1198,8 +1343,8 @@ class CommandSynthVivado(CommandSynth, ToolVivado):
             else:
                 default_xdc = True
                 xdc_file = os.path.abspath(os.path.join(self.args['work-dir'], "default_constraints.xdc"))
-                util.info(f"Creating default constraints: --clock-ns={self.args['clock-ns']}, "+
-                          f"--idelay-ns={self.args['idelay-ns']}, --odelay-ns={self.args['odelay-ns']}")
+                util.info(f"Creating default constraints: clock:{self.args['clock-ns']}ns, "+
+                          f"idelay:{self.args['idelay-ns']}ns, odelay:{self.args['odelay-ns']}ns")
                 with open( xdc_file, 'w' ) as ft:
                     print(f"create_clock -add -name clock -period {self.args['clock-ns']} [get_ports {{clock}}]", file=ft)
                     print(f"set_input_delay -max {self.args['idelay-ns']} -clock clock "+
@@ -1208,25 +1353,20 @@ class CommandSynthVivado(CommandSynth, ToolVivado):
                           f"[get_ports * -filter {{DIRECTION == OUT}}]", file=ft)
             print(f"create_fileset -constrset constraints_1 {v}", file=fo)
             print(f"add_files -fileset constraints_1 {xdc_file} {v}", file=fo)
-            constraints = "-constrset constraints_1"
             print(f"# FIRST PASS -- auto_detect_xpm", file=fo)
             print(f"synth_design -rtl -rtl_skip_ip -rtl_skip_constraints -no_timing_driven -no_iobuf "+
                   f"-top {self.args['top']} {incdirs} {defines} {v}", file=fo)
             print(f"auto_detect_xpm {v}", file=fo)
-            print(f"synth_design -no_iobuf -part {self.args['part']} {flatten} {constraints} "+
+            print(f"synth_design -no_iobuf -part {self.args['part']} {flatten} -constrset constraints_1 "+
                   f"-top {self.args['top']} {incdirs} {defines} {v}", file=fo)
             print(f"write_verilog -force {self.args['top']}.vg {v}", file=fo)
             print(f"report_utilization -file {self.args['top']}.flat.util.rpt {v}", file=fo)
-            print(f"report_utilization -file {self.args['top']}.hier.util.rpt {v} "+
-                  f"-hierarchical -hierarchical_depth 20", file=fo)
+            print(f"report_utilization -file {self.args['top']}.hier.util.rpt {v} -hierarchical -hierarchical_depth 20", file=fo)
             print(f"report_timing -file {self.args['top']}.timing.rpt {v}", file=fo)
             print(f"report_timing_summary -file {self.args['top']}.summary.timing.rpt {v}", file=fo)
-            print(f"report_timing -from [all_inputs] "+
-                  f"-file {self.args['top']}.input.timing.rpt {v}", file=fo)
-            print(f"report_timing -to [all_outputs] "+
-                  f"-file {self.args['top']}.output.timing.rpt {v}", file=fo)
-            print(f"report_timing -from [all_inputs] -to [all_outputs] "+
-                  f"-file {self.args['top']}.through.timing.rpt {v}", file=fo)
+            print(f"report_timing -from [all_inputs] -file {self.args['top']}.input.timing.rpt {v}", file=fo)
+            print(f"report_timing -to [all_outputs] -file {self.args['top']}.output.timing.rpt {v}", file=fo)
+            print(f"report_timing -from [all_inputs] -to [all_outputs] -file {self.args['top']}.through.timing.rpt {v}", file=fo)
             print(f"set si [get_property -quiet SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup -from [all_inputs]]]", file=fo)
             print(f"set so [get_property -quiet SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup -to [all_outputs]]]", file=fo)
             print(f"set_false_path -from [all_inputs] {v}", file=fo)
@@ -1311,15 +1451,61 @@ class CommandProjVivado(CommandProj, ToolVivado):
             print(f"set_property {{xsim.simulate.runtime}} {{10ms}} [get_filesets sim_1]", file=fo)
             print(f"set_property {{xsim.simulate.log_all_signals}} {{true}} [get_filesets sim_1]", file=fo)
 
-            for f in self.files_v:     print(f"add_files -norecurse {f}", file=fo)
-            for f in self.files_sv:    print(f"add_files -norecurse {f}", file=fo)
-            for f in self.files_vhd:   print(f"add_files -norecurse {f}", file=fo)
+            for f in self.files_v + self.files_sv + self.files_vhd:
+                if f.find("/sim/") >= 0: fileset = "sim_1"
+                elif f.find("/tests/") >= 0: fileset = "sim_1"
+                else: fileset = "sources_1"
+                print(f"add_files -norecurse {f} -fileset [get_filesets {fileset}]", file=fo)
 
         # execute Vivado
         command_list = [ 'vivado', '-mode', 'gui', '-source', tcl_file, '-log', f"{self.args['top']}.proj.log" ]
         if not util.args['verbose']: command_list.append('-notrace')
         self.exec(self.args['work-dir'], command_list)
         util.info(f"Synthesis done, results are in: {self.args['work-dir']}")
+
+class CommandBuildVivado(CommandBuild, ToolVivado):
+    def __init__(self, config):
+        CommandBuild.__init__(self, config)
+        ToolVivado.__init__(self)
+        # add args specific to this simulator
+        self.args['gui'] = False
+
+    def do_it(self):
+        # add defines for this job
+        self.set_tool_defines()
+
+        # create FLIST
+        flist_file = os.path.join(self.args['work-dir'],'build.flist')
+        command_list = ['python3', os.path.realpath(__file__), 'flist', self.args['top-path'],
+                        '--force',
+                        '--xilinx',
+                        '--out', flist_file,
+                        '--no-emit-incdir',
+                        '--no-quote-define',
+                        '--prefix-define', '"oc_set_project_define "',
+                        '--prefix-sv', '"add_files -norecurse "',
+                        '--prefix-v', '"add_files -norecurse "',
+                        '--prefix-vhd', '"add_files -norecurse "']
+        self.exec(cwd, command_list)
+
+        print(f"debug: {self.args}")
+        project_dir = 'project.'+self.args['job-name']
+
+        # launch Vivado
+        command_list = ['vivado']
+        command_list += ['-mode', 'gui' if self.args['gui'] else 'batch' ]
+        command_list += ['-log', os.path.join(self.args['work-dir'], self.args['top']+'.build.log') ]
+        if not util.args['verbose']: command_list.append('-notrace')
+        command_list += ['-source', self.args['build-script'] ]
+        command_list += ['-tclargs', project_dir, flist_file] # these must come last, all after -tclargs get passed to build-script
+        self.exec(cwd, command_list)
+
+        util.info(f"Build done, results are in: {self.args['work-dir']}")
+
+class CommandFListVivado(CommandFList, ToolVivado):
+    def __init__(self, config):
+        CommandFList.__init__(self, config)
+        ToolVivado.__init__(self)
 
 class CommandUploadVivado(CommandUpload, ToolVivado):
     def __init__(self, config):
@@ -1338,15 +1524,20 @@ class CommandUploadVivado(CommandUpload, ToolVivado):
         if self.args['file'] == False:
             util.info(f"Searching for bitfiles...")
             found_file = False
-            found_time = 0
+            all_files = []
             for root, dirs, files in os.walk("."):
                 for file in files:
                     if file.endswith(".bit"):
                         found_file = os.path.abspath(os.path.join(root,file))
-                        found_time = 1
                         util.info(f"Found bitfile: {found_file}")
+                        all_files.append(found_file)
             self.args['file'] = found_file
-
+        if len(all_files) > 1:
+            all_files.sort(key=lambda f: os.path.getmtime(f))
+            self.args['file'] = all_files[-1]
+            util.info(f"Choosing: {self.args['file']} (newest)")
+        if self.args['file'] == False:
+            util.error(f"Couldn't find a bitfile to upload")
         if self.args['usb']:
             util.info(f"Uploading bitfile: {self.args['file']}")
             util.info(f"Uploading via {self.args['host']}:{self.args['port']} USB target #{self.args['target']}")
@@ -1386,11 +1577,45 @@ class CommandUploadVivado(CommandUpload, ToolVivado):
                 print(f"exit", file=fo)
 
         # execute Vivado
-        command_list = [ 'vivado', '-source', tcl_file, '-log', f"design.upload.log" ]
+        command_list = [ 'vivado', '-source', tcl_file, '-log', f"fpga.upload.log" ]
         if not self.args['gui']:
             command_list.append('-mode')
             command_list.append('batch')
         self.exec(self.args['work-dir'], command_list)
+
+class CommandOpenVivado(CommandOpen, ToolVivado):
+    def __init__(self, config):
+        CommandOpen.__init__(self, config)
+        ToolVivado.__init__(self)
+        # add args specific to this simulator
+        self.args['gui'] = True
+        self.args['file'] = False
+
+    def do_it(self):
+        if self.args['file'] == False:
+            util.info(f"Searching for project...")
+            found_file = False
+            all_files = []
+            for root, dirs, files in os.walk("."):
+                for file in files:
+                    if file.endswith(".xpr"):
+                        found_file = os.path.abspath(os.path.join(root,file))
+                        util.info(f"Found project: {found_file}")
+                        all_files.append(found_file)
+            self.args['file'] = found_file
+        if len(all_files) > 1:
+            all_files.sort(key=lambda f: os.path.getmtime(f))
+            self.args['file'] = all_files[-1]
+            util.info(f"Choosing: {self.args['file']} (newest)")
+        if self.args['file'] == False:
+            util.error(f"Couldn't find an XPR Vivado project to open")
+        projname = os.path.splitext(os.path.basename(self.args['file']))[0]
+        projdir = os.path.dirname(self.args['file'])
+        oc_root = util.get_oc_root()
+        oc_vivado_tcl = os.path.join(oc_root, 'boards', 'vendors', 'xilinx', 'oc_vivado.tcl')
+        command_list = [ 'vivado', '-source', oc_vivado_tcl, '-log', f"{projname}.open.log", self.args['file'] ]
+        self.exec(projdir, command_list)
+
 
 class ToolQuesta:
     def __init__(self):
@@ -1420,8 +1645,10 @@ class ToolQuesta:
         self.defines['OC_TOOL_QUESTA_%d_%d' % (self.questa_major, self.questa_minor)] = None
         if self.args['xilinx']:
             self.defines['OC_LIBRARY_ULTRASCALE_PLUS'] = None
+            self.defines['OC_LIBRARY'] = "1"
         else:
             self.defines['OC_LIBRARY_BEHAVIORAL'] = None
+            self.defines['OC_LIBRARY'] = "0"
 
 class CommandSimQuesta(CommandSim, ToolQuesta):
     def __init__(self, config):
@@ -1508,12 +1735,16 @@ config = {
         "sim"    : CommandSim,
         "elab"   : CommandElab,
         "synth"  : CommandSynth,
+        "flist"  : CommandFList,
         "proj"   : CommandProj,
         "multi"  : CommandMulti,
-        "flist"  : CommandFList,
+        "sweep"  : CommandSweep,
+        "build"  : CommandBuild,
         "waves"  : CommandWaves,
         "upload" : CommandUpload,
+        "open"   : CommandOpen,
     },
+    'defines'        : {},
     'dep_sub'        : [ [ r'csr\@(\w+)\.txt', r'\1.sv@csrgen,\1.txt $root_dir/v_csr_regs_deps'], ],
     # TODO: I don't think we want file_order stuff.  Anyway how do you handle a package pulling in another package.
     # best if we keep files in the order declared via DEPS and require that you include packages before dependent source
@@ -1530,19 +1761,23 @@ def usage(tokens = []):
 
     Where <command> is one of:
 
-    sim          - Simulates a target
+    sim          - Simulates a DEPS target
+    elab         - Elaborates a DEPS target (sort of sim based LINT)
+    synth        - Synthesizes a DEPS target
+    flist        - Create dependency from a DEPS target
+    proj         - Create a project from a DEPS target for GUI sim/waves/debug
+    multi        - Run multiple DEPS targets, serially or in parallel
+    sweep        - Sweep one or more arguments across a range, serially or in parallel
+    build        - Build for a board, creating a project and running build flow
     waves        - Opens waveform from prior simulation
-    elab         - Elaborates a target (sort of sim based LINT)
-    synth        - Synthesizes a target
-    proj         - Create a project based on a target
-    flist        - Create dependency list of a target
     upload       - Uploads a finished design into hardware
+    open         - Opens a project
     help         - This help (without args), or i.e. "eda help sim" for specific help
 """)
     elif tokens[0] in config['command_handler']:
         sco = config['command_handler'][tokens[0]](config) # sub command object
         sco.help()
-        sys.exit(0)
+        util.exit()
     else:
         util.info(f"Valid commands are: ")
         for k in sorted(config['command_handler'].keys()):
@@ -1583,6 +1818,9 @@ def tool_setup(tool, quiet=False):
         config['command_handler']['synth'] = CommandSynthVivado
         config['command_handler']['proj'] = CommandProjVivado
         config['command_handler']['upload'] = CommandUploadVivado
+        config['command_handler']['open'] = CommandOpenVivado
+        config['command_handler']['flist'] = CommandFListVivado
+        config['command_handler']['build'] = CommandBuildVivado
     elif tool == "questa":
         config['command_handler']['elab'] = CommandElabQuesta
         config['command_handler']['sim'] = CommandSimQuesta
@@ -1603,12 +1841,12 @@ def process_tokens(tokens):
     while (len(tokens)):
         token = tokens.pop(0)
         if (token == 'quit') or (token == 'q') or (token == 'exit'):
-            exit(0)
+            util.exit()
         if ((token == 'help') or (token == 'h') or
             (token == '-help') or (token == '-h') or
             (token == '--help') or (token == '--h')):
             usage(tokens)
-            exit(0)
+            util.exit()
         if util.process_token(token): # see if eda_util needs to process this (printing related)
             continue
         if token == '--tool':
@@ -1632,12 +1870,13 @@ def process_tokens(tokens):
 def signal_handler(sig, frame):
     util.fancy_stop()
     util.info('Received Ctrl+C...', start='\nINFO: [EDA] ')
-    util.exit(1)
+    util.exit(-1)
 
 # **************************************************************
 # **** Startup Code
 
 debug_respawn = False
+#debug_respawn = True
 util.progname = "EDA"
 
 def main():
@@ -1649,10 +1888,10 @@ def main():
         auto_tool_setup()
         process_tokens(sys.argv[1:])
     else:
-        util.info("*** OpenCOS EDA Wrapper ***")
+        util.info(f"*** OpenCOS EDA Wrapper ***")
         interactive() # go interactive if not given any arguments
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     # First we check if we are respawning
     this_path = os.path.realpath(__file__)
     if debug_respawn: util.debug(f"RESPAWN: this_path : '{this_path}'")
@@ -1660,11 +1899,11 @@ if __name__ == "__main__":
     if debug_respawn: util.debug(f"RESPAWN: oc_root   : '{oc_root}'")
     cwd = util.getcwd()
     if debug_respawn: util.debug(f"RESPAWN: cwd       : '{cwd}'")
-    if oc_root and (not '-respawn' in sys.argv):
-        new_path = os.path.join(oc_root, "bin", "eda")
+    if oc_root and (not '--no-respawn' in sys.argv):
+        new_path = os.path.join(oc_root, 'bin', 'eda')
         if (this_path != new_path):
             # we are not the correct version of EDA for this Git repo, we should respawn
-            util.info('%s respawning %s in %s' % (this_path, new_path, cwd))
+            util.info(f"{this_path} respawning {new_path} in {cwd} (use --no-spawn to avoid)")
             sys.argv[0] = new_path
             proc = subprocess.Popen(sys.argv, shell=0, cwd=cwd, universal_newlines=True)
             while True:

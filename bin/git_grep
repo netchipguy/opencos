@@ -2,7 +2,7 @@
 
 my @searches = ();
 my $replace = undef;
-my $casesmart = 0;
+my $nocase = 0;
 my $partial = 0;
 my $really = 0;
 my $smartpad = 0;
@@ -18,12 +18,12 @@ while (@ARGV) {
         if (not defined $next_arg) { my_error("Need arg after $arg"); }
         $replace = $next_arg; 
     }
-    elsif ($arg eq "-i") {
+    elsif ($arg eq "-g") {
         my $next_arg = shift(@ARGV);
         if (not defined $next_arg) { my_error("Need arg after $arg"); }
         $ignores{$next_arg} = undef; 
     }
-    elsif ($arg eq "-c") { $casesmart = 1; }
+    elsif ($arg eq "-i") { $nocase = 1; }
     elsif ($arg eq "-p") { $partial = 1; }
     elsif ($arg eq "-s") { $smartpad = 1; }
     elsif ($arg eq "-l") { $local = 1; }
@@ -48,7 +48,7 @@ if (not $partial) {
 }
 
 my $search = join('|', @searches);
-if ($casesmart) {
+if ($nocase) {
     $search = lc($search);
 }
 
@@ -96,12 +96,13 @@ sub do_file {
              ($path =~ /\.xpr$/) or ($path =~ /\.xdc$/) or ($path =~ /\.cpp$/) or
              ($path =~ /\.pro$/) or ($path =~ /\.ui$/) or ($path =~ /\.sh$/) or
              ($path =~ /\.py$/) or ($path =~ /\.pl$/) or ($path =~ /\.tcl$/) or
-             ($path =~ /\.sdc$/) or ($path =~ /_csr\.txt$/) or ($path =~ /DEPS$/))) { return; }
+             ($path =~ /\.sdc$/) or ($path =~ /_csr\.txt$/) or ($path =~ /\boc_[\w+]$/) or
+             ($path =~ /DEPS$/))) { return; }
     open(my $fh, $path) or my_error("Can't open $path");
     my $line = 1;
     my $found = 0;
     while (<$fh>) {
-        if ($casesmart ?
+        if ($nocase ?
             (lc($_) =~ /$search/) :
             ($_ =~ /$search/)) {
             print "${path}:${line} :  $_";
@@ -217,7 +218,8 @@ git_grep <search_phrase> [<search_phrase> ...] [options]
 
 Where [options] are: 
     -r <replace_phrase>    Perform replace.  Only valid with single <search_phrase>
-    -c                     Case insensitive
+    -g <ignore_path>       Ignore paths that match <ignore_path>
+    -i                     Case insensitive matching
     -p                     Partial word match.  When not set, <search_phrase> expected to be a full word if it
                            looks like one
     -s                     Smart padding.  When set, will add extra spaces when replacing with a shorter

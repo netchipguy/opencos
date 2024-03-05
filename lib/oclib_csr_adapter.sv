@@ -6,25 +6,26 @@
 
 module oclib_csr_adapter
   #(
-    parameter         type CsrInType = oclib_pkg::csr_32_s,
-    parameter         type CsrInFbType = oclib_pkg::csr_32_fb_s,
-    parameter         type CsrInProtocol = oclib_pkg::csr_32_s,
-    parameter         type CsrOutType = oclib_pkg::csr_32_s,
-    parameter         type CsrOutFbType = oclib_pkg::csr_32_fb_s,
-    parameter         type CsrOutProtocol = oclib_pkg::csr_32_s,
-    parameter bit     UseClockOut = oclib_pkg::False,
-    parameter integer SyncCycles = 3,
-    parameter bit     ResetSync = UseClockOut,
-    parameter integer ResetPipeline = 0,
-    parameter integer Spaces = 1,
-    parameter [31:0]  AnswerToBlock = oclib_pkg::BcBlockIdAny,
-    parameter [3:0]   AnswerToSpace = oclib_pkg::BcSpaceIdAny, // a base space, if we have multiple address spaces
+    parameter        type CsrInType = oclib_pkg::csr_32_s,
+    parameter        type CsrInFbType = oclib_pkg::csr_32_fb_s,
+    parameter        type CsrInProtocol = oclib_pkg::csr_32_s,
+    parameter        type CsrOutType = oclib_pkg::csr_32_s,
+    parameter        type CsrOutFbType = oclib_pkg::csr_32_fb_s,
+    parameter        type CsrOutProtocol = oclib_pkg::csr_32_s,
+    parameter bit    UseClockOut = oclib_pkg::False,
+    parameter int    SyncCycles = 3,
+    parameter bit    ResetSync = UseClockOut,
+    parameter int    ResetPipeline = 0,
+    parameter int    Spaces = 1,
+    parameter [31:0] AnswerToBlock = oclib_pkg::BcBlockIdAny,
+    parameter [3:0]  AnswerToSpace = oclib_pkg::BcSpaceIdAny, // a base space, if we have multiple address spaces
     // CsrIntType -- the internal normalized datapath type
     // now these are borderline "localparam" but if you're really careful and you are using
     // this to cross clocks or serialize a csr_64 it can work.  But most outputs will only
     // work with csr_32 there (and have assertions to check)
-    parameter         type CsrIntType = oclib_pkg::csr_32_s,
-    parameter         type CsrIntFbType = oclib_pkg::csr_32_fb_s
+    parameter        type CsrIntType = oclib_pkg::csr_32_s,
+    parameter        type CsrIntFbType = oclib_pkg::csr_32_fb_s,
+    parameter bit    EnableILA = oclib_pkg::False
     )
   (
    input  clock,
@@ -51,8 +52,8 @@ module oclib_csr_adapter
 
   logic   clockInMuxed;
   logic   resetInSync;
-  if (UseClockOut && ((type(CsrInType) == type(oclib_pkg::bc_async_8b_bidi_s)) ||
-                      (type(CsrInType) == type(oclib_pkg::bc_async_1b_bidi_s)))) begin
+  if (UseClockOut && ((`OC_TYPES_EQUAL(CsrInType, oclib_pkg::bc_async_8b_bidi_s)) ||
+                      (`OC_TYPES_EQUAL(CsrInType, oclib_pkg::bc_async_1b_bidi_s)))) begin
     // If we've been given a clockOut, and the input bus is async, then we'll just use
     // clockOut anywhere we need a clock, to try and not stretch the clockIn domain
     assign clockInMuxed = clockOut;
@@ -77,7 +78,7 @@ module oclib_csr_adapter
     assign resetOutSync = resetInSync;
   end
 
-  if ((type(CsrInType) == type(CsrOutType)) && !UseClockOut && (Spaces==1)) begin : NOCONV
+  if ((`OC_TYPES_EQUAL(CsrInType, CsrOutType)) && !UseClockOut && (Spaces==1)) begin : NOCONV
     assign out = in;
     assign inFb = outFb;
   end
@@ -89,16 +90,16 @@ module oclib_csr_adapter
     CsrIntType inNormal;
     CsrIntFbType inNormalFb;
 
-    if (type(CsrInType) == type(CsrIntType)) begin
+    if (`OC_TYPES_EQUAL(CsrInType, CsrIntType)) begin
       // we actually need to take care of converting 32/64 bit here
       assign inNormal = in;
       assign inFb = inNormalFb;
     end
 
     // OK, so we are converting input to csr_32_s ... is this a byte channel?
-    else if ((type(CsrInType) == type(oclib_pkg::bc_async_8b_bidi_s)) ||
-             (type(CsrInType) == type(oclib_pkg::bc_async_1b_bidi_s)) ||
-             (type(CsrInType) == type(oclib_pkg::bc_8b_bidi_s))) begin
+    else if ((`OC_TYPES_EQUAL(CsrInType, oclib_pkg::bc_async_8b_bidi_s)) ||
+             (`OC_TYPES_EQUAL(CsrInType, oclib_pkg::bc_async_1b_bidi_s)) ||
+             (`OC_TYPES_EQUAL(CsrInType, oclib_pkg::bc_8b_bidi_s))) begin
 
       // Convert the BC to a normalized CSR
 
@@ -120,12 +121,12 @@ module oclib_csr_adapter
     CsrIntFbType inSyncFb;
     // remember, if the incoming bus was async, and we were given clockOut, we already put
     // it onto clockOut (via clockInMuxed) above...
-    if (UseClockOut && !((type(CsrInType) == type(oclib_pkg::bc_async_8b_bidi_s)) ||
-                         (type(CsrInType) == type(oclib_pkg::bc_async_1b_bidi_s)))) begin
+    if (UseClockOut && !((`OC_TYPES_EQUAL(CsrInType, oclib_pkg::bc_async_8b_bidi_s)) ||
+                         (`OC_TYPES_EQUAL(CsrInType, oclib_pkg::bc_async_1b_bidi_s)))) begin
       oclib_csr_synchronizer #(.SyncCycles(SyncCycles),
-                               .UseResetIn(1), .UseResetOut(1),
+                               .UseResetIn(oclib_pkg::True), .UseResetOut(oclib_pkg::True),
                                .CsrType(CsrIntType), .CsrFbType(CsrIntFbType))
-      uCSR_SYNC (.clockIn(clockInMuxed), .reset(resetInSync),
+      uCSR_SYNC (.clockIn(clockInMuxed), .resetIn(resetInSync),
                  .csrIn(inNormal), .csrInFb(inNormalFb),
                  .clockOut(clockOutMuxed), .resetOut(resetOutSync),
                  .csrOut(inSync), .csrOutFb(inSyncFb));
@@ -157,40 +158,50 @@ module oclib_csr_adapter
       inSyncFb = inSpacesFb[spaceSelect];
     end
 
+    if (EnableILA) begin
+    `OC_DEBUG_ILA(uILA, clock, 8192, 128, 32,
+                  { in, inFb, inSync.write, inSync.read, csrSelect },
+                  { resetInSync, resetOutSync,
+                    in.valid, in.ready, inFb.valid, inFb.ready,
+                    out[0].read, out[0].write, out[1].read, out[1].write,
+                    outFb[0].ready, outFb[1].ready
+                    });
+    end
+
     // convert from internal to output format
 
     for (genvar o=0; o<Spaces; o++) begin : spaces
 
-      if (type(CsrOutType) == type(CsrIntType)) begin
+      if (`OC_TYPES_EQUAL(CsrOutType, CsrIntType)) begin
         always_comb begin
           out[o] = inSpaces[o];
           inSpacesFb[o] = outFb[o];
         end
-      end // if (type(CsrOutType) == type(CsrIntType)) begin
+      end // if (`OC_TYPES_EQUAL(CsrOutType, CsrIntType)) begin
 
-      else if (type(CsrOutType) == type(oclib_pkg::drp_s)) begin
-        `OC_STATIC_ASSERT(type(CsrIntType) == type(oclib_pkg::csr_32_s)); // DRP needs standard CsrIntType
+      else if (`OC_TYPES_EQUAL(CsrOutType, oclib_pkg::drp_s)) begin
+        `OC_STATIC_ASSERT(`OC_TYPES_EQUAL(CsrIntType, oclib_pkg::csr_32_s)); // DRP needs standard CsrIntType
         oclib_csr_to_drp #(.AnswerToBlock(AnswerToBlock), .AnswerToSpace(AnswerToSpace))
         uCSR_TO_DRP (.clock(clockOutMuxed), .reset(resetOutSync),
                      .csr(inSpaces[o]), .csrFb(inSpacesFb[o]),
                      .drp(out[o]), .drpFb(outFb[o]));
-      end // if (type(CsrOutType) == type(oclib_pkg::drp_s)) begin
+      end // if (`OC_TYPES_EQUAL(CsrOutType, oclib_pkg::drp_s)) begin
 
-      else if (type(CsrOutType) == type(oclib_pkg::apb_s)) begin
-        `OC_STATIC_ASSERT(type(CsrIntType) == type(oclib_pkg::csr_32_s)); // APB needs standard CsrIntType
+      else if (`OC_TYPES_EQUAL(CsrOutType, oclib_pkg::apb_s)) begin
+        `OC_STATIC_ASSERT(`OC_TYPES_EQUAL(CsrIntType, oclib_pkg::csr_32_s)); // APB needs standard CsrIntType
         oclib_csr_to_apb #(.AnswerToBlock(AnswerToBlock), .AnswerToSpace(AnswerToSpace))
         uCSR_TO_APB (.clock(clockOutMuxed), .reset(resetOutSync),
                      .csr(inSpaces[o]), .csrFb(inSpacesFb[o]),
                      .apb(out[o]), .apbFb(outFb[o]));
-      end // if (type(CsrOutType) == type(oclib_pkg::apb_s)) begin
+      end // if (`OC_TYPES_EQUAL(CsrOutType, oclib_pkg::apb_s)) begin
 
-      else if (type(CsrOutType) == type(oclib_pkg::axil_32_s)) begin
-        `OC_STATIC_ASSERT(type(CsrIntType) == type(oclib_pkg::csr_32_s)); // AXIL needs standard CsrIntType
+      else if (`OC_TYPES_EQUAL(CsrOutType, oclib_pkg::axil_32_s)) begin
+        `OC_STATIC_ASSERT(`OC_TYPES_EQUAL(CsrIntType, oclib_pkg::csr_32_s)); // AXIL needs standard CsrIntType
         oclib_csr_to_axil #(.AnswerToBlock(AnswerToBlock), .AnswerToSpace(AnswerToSpace))
         uCSR_TO_AXIL (.clock(clockOutMuxed), .reset(resetOutSync),
                       .csr(inSpaces[o]), .csrFb(inSpacesFb[o]),
                       .axil(out[o]), .axilFb(outFb[o]));
-      end // if (type(CsrOutType) == type(oclib_pkg::axil_s)) begin
+      end // if (`OC_TYPES_EQUAL(CsrOutType, oclib_pkg::axil_32_s)) begin
 
       else begin
         `OC_STATIC_ERROR($sformatf("Don't know how to convert CSR to type: %s", $typename(CsrOutType)));
@@ -199,5 +210,41 @@ module oclib_csr_adapter
     end // block: out
 
   end // else: !if(type(CsrInType) == type(CsrOutType))
+
+  // Some tools have issues with this stuff. so let's do some sanity checks (this also makes the "types"
+  // visible in waveform tools...)
+
+  localparam int     CsrInTypeW = $bits(CsrInType);
+  localparam int     CsrInFbTypeW = $bits(CsrInFbType);
+  localparam int     CsrInProtocolW = $bits(CsrInProtocol);
+  localparam int     CsrOutTypeW = $bits(CsrOutType);
+  localparam int     CsrOutFbTypeW = $bits(CsrOutFbType);
+  localparam int     CsrOutProtocolW = $bits(CsrOutProtocol);
+
+  `OC_STATIC_ASSERT(CsrInTypeW == $bits(in));
+  `OC_STATIC_ASSERT(CsrInFbTypeW == $bits(inFb));
+  `OC_STATIC_ASSERT(CsrOutTypeW == $bits(out[0]));
+  `OC_STATIC_ASSERT(CsrOutFbTypeW == $bits(outFb[0]));
+
+  `OC_STATIC_ASSERT(`OC_TYPES_EQUAL(CsrInType,CsrInType));
+  `OC_STATIC_ASSERT(`OC_TYPES_EQUAL(CsrInFbType,CsrInFbType));
+
+  // You'd think this would be in oclib_pkg, but generated code must be in a module
+
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::bc_8b_bidi_s,       oclib_pkg::bc_8b_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::bc_8b_bidi_s,       oclib_pkg::bc_async_8b_bidi_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::bc_8b_s,            oclib_pkg::bc_async_8b_bidi_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::bc_async_8b_bidi_s, oclib_pkg::bc_async_8b_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::bc_async_8b_bidi_s, oclib_pkg::csr_32_s));
+
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::csr_32_s,           oclib_pkg::csr_32_tree_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::csr_32_tree_s,      oclib_pkg::csr_32_noc_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::csr_32_noc_s,       oclib_pkg::csr_32_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::csr_32_s,           oclib_pkg::axil_32_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::csr_32_s,           oclib_pkg::drp_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::csr_32_s,           oclib_pkg::apb_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::drp_s,              oclib_pkg::axil_32_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::drp_s,              oclib_pkg::apb_s));
+  `OC_STATIC_ASSERT(`OC_TYPES_NOTEQUAL(oclib_pkg::apb_s,              oclib_pkg::axil_32_s));
 
 endmodule // oclib_csr_adapter

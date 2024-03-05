@@ -21,6 +21,15 @@ package ocsim_pkg;
     return "<?>";
   endfunction // CharToString
 
+  function int RandInt (int minimum, int maximum);
+    return minimum + ($urandom % (maximum-minimum+1));
+  endfunction // RandInt
+
+  function bit RandPercent (real percent);
+    // we make sure 0.0 always returns false and 100.0 always returns true
+    return (percent > (real'(RandInt(1,100_000_000-1)) / 1_000_000.0));
+  endfunction // RandInt
+
 endpackage // ocsim_pkg
 
 

@@ -3,6 +3,8 @@
 
 `include "lib/oclib_pkg.sv"
 
+// TODO: this is going to need an UpProtocolFb and DownProtocolFb isn't it?
+
 module oclib_bc_tree_splitter
   #(
     parameter                        type BcType = oclib_pkg::bc_8b_bidi_s,
@@ -39,7 +41,7 @@ module oclib_bc_tree_splitter
   oclib_module_reset #(.ResetSync(ResetSync), .SyncCycles(SyncCycles), .ResetPipeline(ResetPipeline))
   uRESET_SYNC (.clock(clock), .in(reset), .out(resetSync));
 
-  logic [BlockBytes-1:0] [7:0] block;
+  logic [BlockBytes-1:0] [7:0]   block;
   logic [7:0]                    length;
   logic [7:0]                    counter;
   logic [OutputsSafe-1:0]        mask;
@@ -93,7 +95,7 @@ module oclib_bc_tree_splitter
     else begin
       case (state)
 
-        // eventually a non valid length here (>112) , such as 126 "~", should signal synchronization
+        // TODO: eventually a non valid length here (>112) , such as 126 "~", should signal synchronization
         // and reset operations.  We don't iterate a length >120 and so we are guaranteed to return
         // to initial state if we receive >100 NOPs (or RESET, ID).  We can tunnel these tokens too
         // if we get a 112>length>120.  The BC infra will not trigger until 120 and will treat
@@ -110,13 +112,13 @@ module oclib_bc_tree_splitter
         end // StLength
 
         StBlock : begin
-          upOut.ready <= 1'b1;
           downOutInternal.valid <= 1'b0;
           if (upIn.valid && upOut.ready) begin
             block <= { block[BlockBytes-2:0], upIn.data };
             counter <= (counter + 'd1);
             if (counter == (BlockBytes-1)) begin
               state <= StCalcMask;
+              upOut.ready <= 1'b0;
             end
           end
         end // StBlock

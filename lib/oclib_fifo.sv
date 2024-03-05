@@ -1,34 +1,56 @@
 
 // SPDX-License-Identifier: MPL-2.0
 
-module oclib_fifo #(parameter integer Width = 32,
-                    parameter integer Depth = 32,
-                    parameter integer AlmostFull = (Depth-8),
-                    parameter bit BlockSimReporting = 0)
+`include "lib/oclib_pkg.sv"
+
+module oclib_fifo #(parameter int Width = 32,
+                    parameter int Depth = 32,
+                    parameter     type DataType = logic [Width-1:0],
+                    parameter int AlmostFull = (Depth-8),
+                    parameter int AlmostEmpty = 8,
+                    parameter bit BlockSimReporting = oclib_pkg::False)
   (
-   input                    clock,
-   input                    reset,
-   output logic             almostFull,
-   input [Width-1:0]        inData,
-   input                    inValid,
-   output logic             inReady,
-   output logic [Width-1:0] outData,
-   output logic             outValid,
-   input                    outReady
+   input        clock,
+   input        reset,
+   output logic almostFull,
+   output logic almostEmpty,
+   input        DataType inData,
+   input        inValid,
+   output logic inReady,
+   output       DataType outData,
+   output logic outValid,
+   input        outReady
    );
 
+  localparam integer DataWidth = $bits(inData);
   localparam integer AddressWidth = $clog2(Depth);
+
+  // wow this is ugly, will find a better way
+  localparam bit     UsingSrl = ((Depth <= 32) &&
+`ifdef OC_LIBRARY_ULTRASCALE_PLUS
+  `ifndef OCLIB_FIFO_DISABLE_SRL
+                                 1 ||
+  `endif
+`endif
+                                 0);
+
+  localparam bit     UsingXpm = (
+`ifdef OC_LIBRARY_ULTRASCALE_PLUS
+  `ifndef OCLIB_FIFO_DISABLE_XPM
+                                 1 ||
+  `endif
+`endif
+                                 0);
 
   if (Depth == 0) begin
     assign outData = inData;
     assign outValid = inValid;
     assign inReady = outReady;
   end
-`ifndef OCLIB_FIFO_DISABLE_SRL
-  else if (Depth <= 32) begin : impl
+  else if (UsingSrl) begin
 
     // This should map efficiently into SRLs for 32-deep FIFOs
-    logic [Width-1:0]        mem [Depth-1:0];
+    logic [DataWidth-1:0]    mem [Depth-1:0];
     logic                    write;
     logic                    read;
     logic                    full;
@@ -64,39 +86,37 @@ module oclib_fifo #(parameter integer Width = 32,
                       (write && ~read && ~full && ~empty) ? (readPointer+1) :
                       (~write && read && ~readPointerZero) ? (readPointer-1) :
                       readPointer);
-      almostFull <= (reset ? 1'b0 :
-                     (readPointer >= AlmostFull));
+      almostFull <= (reset ? 1'b0 : (readPointer >= AlmostFull));
+      almostEmpty <= (reset ? 1'b1 : (readPointer <= AlmostEmpty));
     end
 
-  end // if (Depth <= 32)
-`endif
-  else begin
-`ifndef OCLIB_FIFO_DISABLE_BRAM
+  end // if (UsingSrl)
+  else if (UsingXpm) begin
 
-    logic full;
-    logic empty;
-    assign inReady = ~full;
-    assign outValid = ~empty;
+    // we can't get in here without this being set, but we still need to skip during compilations
+`ifdef OC_LIBRARY_ULTRASCALE_PLUS
+
+    logic fullWrite, emptyRead, busyWrite, busyRead;
 
     xpm_fifo_sync #(
-                    .DOUT_RESET_VALUE("0"),
-                    .ECC_MODE("no_ecc"),
                     .FIFO_MEMORY_TYPE("bram"), // need to make this smarter (LUTRAM, URAM)
-                    .FIFO_READ_LATENCY(0),  // needed 0 by "fwft" READ_MODE
+                    .READ_DATA_WIDTH(DataWidth),
+                    .WRITE_DATA_WIDTH(DataWidth),
                     .FIFO_WRITE_DEPTH(Depth),
-                    .FULL_RESET_VALUE(0),
-                    .PROG_EMPTY_THRESH(10),
+                    .READ_MODE("fwft"),
+                    .FIFO_READ_LATENCY(0),  // needed given "fwft"
+                    .PROG_EMPTY_THRESH(AlmostEmpty),
                     .PROG_FULL_THRESH(AlmostFull),
                     .RD_DATA_COUNT_WIDTH(1),
-                    .READ_DATA_WIDTH(Width),
-                    .READ_MODE("fwft"), // first word fall through
-                    .USE_ADV_FEATURES("0002"),
-                    .WAKEUP_TIME(0),
                     .WR_DATA_COUNT_WIDTH(1),
-                    .WRITE_DATA_WIDTH(Width)
+                    .FULL_RESET_VALUE(0),
+                    .WAKEUP_TIME(0),
+                    .DOUT_RESET_VALUE("0"),
+                    .USE_ADV_FEATURES("0202"),
+                    .ECC_MODE("no_ecc")
                     )
     uXPM (
-          .almost_empty(), // these only give one entry notice, we don't use them
+          .almost_empty(), // these only give one entry notice
           .almost_full(),
           .data_valid(),
           .dbiterr(),
@@ -107,11 +127,11 @@ module oclib_fifo #(parameter integer Width = 32,
           .injectdbiterr(1'b0),
           .injectsbiterr(1'b0),
           .overflow(),
-          .prog_empty(),
+          .prog_empty(almostEmpty),
           .prog_full(almostFull),
           .rd_data_count(),
           .rd_en(outReady),
-          .rd_rst_busy(),
+          .rd_rst_busy(busyRead),
           .rst(reset),
           .sbiterr(),
           .sleep(1'b0),
@@ -120,32 +140,84 @@ module oclib_fifo #(parameter integer Width = 32,
           .wr_clk(clock),
           .wr_data_count(),
           .wr_en(inValid),
-          .wr_rst_busy()
+          .wr_rst_busy(busyWrite)
           );
 
+    assign inReady = !(fullWrite || busyWrite);
+    assign outValid = !(emptyRead || busyRead);
+
     /*
-      DECODER RING FOR USE_ADV_FEATURES PARAMETER (which is a string!?!)
-
-12:  1'b0, // not using data_valid
-     1'b0, // not using almost_empty
-     1'b0, // not using rd_data_count
-9:   1'b0, // using prog_empty
-8:   1'b0, // not using underflow
-7:   1'b0, // bit 7 : n/a
-     1'b0, // bit 6 : n/a
-     1'b0, // bit 5 : n/a
-     1'b0, // not using wr_ack
-     1'b0, // not using almost_full
-     1'b0, // not using wr_data_count
-1:   1'b1, // using prog_full
-0:   1'b0  // not using overflow
-
+      USE_ADV_FEATURES
+     // write side
+     0 : overflow
+     1 : prog_full
+     2 : wr_data_count
+     3 : almost_full
+     4 : wr_ack
+     // read side
+     8 : underflow
+     9 : prog_empty
+     10 : rd_data_count
+     11 : almost_empty
+     12 : data_valid
      */
 
-`else // !`ifndef OCLIB_FIFO_DISABLE_BRAM
-    `OC_STATIC_ERROR("oclib_fifo currently only supports 32 deep!");
-`endif // !`ifndef OCLIB_FIFO_DISABLE_BRAM
-  end // else: !if(Depth <= 32)
+`endif // OC_LIBRARY_ULTRASCALE_PLUS
+
+  end // if (UsingXpm)
+  else begin
+    // This is a basic RTL implementation, for sim (or unsupported library situations, but this is intended for simplicity
+    // and for now isn't really optimized for timing, power, etc).  Even latency isn't ideal.
+
+    logic write;
+    assign write = inValid && inReady;
+    logic read;
+    assign read = outValid && outReady;
+
+    logic [AddressWidth:0] depth;
+    logic [AddressWidth:0] depthNext;
+    logic [AddressWidth-1:0] readPointer;
+    logic [AddressWidth-1:0] readPointerNext;
+    logic [AddressWidth-1:0] writePointer;
+    logic [AddressWidth-1:0] writePointerNext;
+
+    logic [DataWidth-1:0]    mem [Depth];
+
+    assign depthNext = (depth + {'0,write} - {'0,read});
+    assign writePointerNext = ((writePointer + {'0,write}) % Depth);
+    assign readPointerNext = ((readPointer + {'0,read}) % Depth);
+
+    always_ff @(posedge clock) begin
+      if (reset) begin
+        depth <= '0;
+        readPointer <= '0;
+        writePointer <= '0;
+        inReady <= 1'b0;
+        outValid <= 1'b0;
+        almostFull <= 0;
+        almostEmpty <= 1;
+      end
+      else begin
+        depth <= depthNext;
+        readPointer <= readPointerNext;
+        writePointer <= writePointerNext;
+        inReady <= (depthNext < Depth);
+        outValid <= (depthNext > 0);
+        almostFull <= (depthNext >= AlmostFull);
+        almostEmpty <= (depthNext <= AlmostEmpty);
+      end
+    end
+
+    always_ff @(posedge clock) begin
+      if (write) begin
+        mem[writePointer] <= inData;
+      end
+      outData <= ((write && ((depth==0) || (read && (depth==1)))) ? inData :
+                  mem[readPointerNext]);
+    end
+
+  end // else: !if(UsingXpm)
+
 
 `ifdef SIMULATION
   // during sims this will always be here, regardless of implementation above, so testbench/waves can always refer to it
@@ -158,7 +230,7 @@ module oclib_fifo #(parameter integer Width = 32,
   end
   `ifdef SIM_FIFO_DEPTH_REPORT
   int simMaxDepth;
-  int simTotalDepth;
+  longint simTotalDepth;
   int simTotalSamples;
   always @(posedge clock) begin
     if (reset) begin
@@ -175,8 +247,8 @@ module oclib_fifo #(parameter integer Width = 32,
   always begin
     #( `OC_FROM_DEFINE_ELSE(SIM_REPORT_INTERVAL_NS, 5000) * 1ns);
     if (!BlockSimReporting) begin
-      $display("%t %m: Depth=%4d/%4d (Max=%4d, Avg=%4d)", $realtime, simDepth, Depth, simMaxDepth,
-               (simTotalDepth / simTotalSamples));
+      $display("%t %m: Depth=%4d/%4d (Max=%4d, Avg=%6.1f)", $realtime, simDepth, Depth, simMaxDepth,
+               (real'(simTotalDepth) / real'(simTotalSamples)));
     end
   end
   `endif // ifdef SIM_FIFO_DEPTH_REPORT

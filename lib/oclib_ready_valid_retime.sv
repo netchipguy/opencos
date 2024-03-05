@@ -4,10 +4,10 @@
 `include "lib/oclib_pkg.sv"
 
 module oclib_ready_valid_retime
-  #(parameter integer Width = 1,
-    parameter integer SyncCycles = 3,
-    parameter bit     ResetSync = oclib_pkg::False,
-    parameter integer ResetPipeline = 0
+  #(parameter int Width = 1,
+    parameter int SyncCycles = 3,
+    parameter bit ResetSync = oclib_pkg::False,
+    parameter int ResetPipeline = 0
     )
   (
    input                    clock,

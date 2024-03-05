@@ -1,5 +1,5 @@
 
-oc_chip_top:
+oc_chip_top: # eda_multi ignore * # can't compile the IPs outside project context
         oc_chip_top.sv
         ../../top/oc_cos
         # the xilinx tag is so that we can "eda sim oc_chip_top".  when build.tcl calls "eda flist" it will not
@@ -9,3 +9,35 @@ oc_chip_top:
         # directly instantiates Xilinx IP (I/O pads etc) without oclib wrappers, so it REQUIRES Xilinx libs, and
         # since they exist outside OpenChip we can't put them into DEPS.  So we tell EDA to go find them...
         --xilinx
+
+u200: # eda_multi ignore *
+        oc_chip_top
+        +define+OC_VENDOR=1
+        +define+OC_BOARD=2
+        +define+OC_BOARD_IIC_OFFLOAD_ENABLE
+        +define+OC_BOARD_PCIE_COUNT=1
+        +define+OC_BOARD_PCIE_X1
+        +define+OC_BOARD_PCIE_CONTROL_ENABLE=1
+        +define+OC_BOARD_UART_CONTROL_ENABLE=1
+        +define+OC_TARGET_PROTECT_COUNT=1
+        +define+OC_TARGET_DUMMY_COUNT=1
+        +define+OC_TARGET_DUMMY_USE_PLL_CLOCK=1
+        +define+OC_TARGET_DUMMY_CLOCK_SELECT=0
+        +define+OC_TARGET_DUMMY_DATAPATH_PIPE_STAGES=8
+        +define+OC_PCIE_INCLUDE_ILA_DEBUG
+        +define+OC_PCIE_CONTROL_INCLUDE_ILA_DEBUG
+        +define+OC_UART_CONTROL_INCLUDE_ILA_DEBUG
+        +define+OC_USER_AXILS=1
+        --build-script build.tcl
+
+u200_debug: # eda_multi ignore *
+        u200
+        +define+OC_PCIE_INCLUDE_ILA_DEBUG
+        +define+OC_PCIE_CONTROL_INCLUDE_ILA_DEBUG
+        +define+OC_UART_CONTROL_INCLUDE_ILA_DEBUG
+        +define+OC_UART_CONTROL_INCLUDE_VIO_DEBUG
+        +define+OC_BC_CONTROL_INCLUDE_VIO_DEBUG
+        +define+OC_BOARD_TOP_DEBUG
+        +define+OC_IIC_INCLUDE_ILA_DEBUG
+        +define+OC_PROTECT_INCLUDE_ILA_DEBUG
+        +define+OC_PLL_INCLUDE_ILA_DEBUG

@@ -82,7 +82,7 @@ module oc_chipmon #(
 
     // 0 : CSR ID
     //   [    0] InternalReference
-    //   [15: 4] ChipMonType
+    //   [15: 8] ChipMonType
     //   [31:16] csrId
     // 1 : Control
     //   [    0] softReset
@@ -93,8 +93,8 @@ module oc_chipmon #(
     //   [    0] thermalError
     //   [31:16] alarm
 
-    localparam logic [11:0] ChipMonType = 12'd2; // SYSMONE4
-    localparam logic [31:0] CsrId = { oclib_pkg::CsrIdChipMon, ChipMonType, 3'd0, InternalReference };
+    localparam logic [7:0] ChipMonType = 8'd2; // SYSMONE4
+    localparam logic [31:0] CsrId = { oclib_pkg::CsrIdChipMon, ChipMonType, 7'd0, InternalReference };
 
     oclib_csr_array #(.CsrType(CsrIntType), .CsrFbType(CsrIntFbType),
                       .NumCsr(NumCsr),
@@ -235,7 +235,9 @@ module oc_chipmon #(
                 { '0 });
   `endif // OC_CHIPMON_INCLUDE_ILA_DEBUG
 
-`else // !`ifdef OC_LIBRARY_ULTRASCALE_PLUS
+  // `ifdef OC_LIBRARY_ULTRASCALE_PLUS
+`else
+  // OC_LIBRARY_BEHAVIORAL
 
   // BEHAVIORAL IMPLEMENTATION
 
@@ -257,9 +259,8 @@ module oc_chipmon #(
     //   [31:16] csrId
     localparam integer NumCsr = 1;
 
-    localparam logic [11:0] ChipMonType = 12'd0; // "NONE" IMPLEMENTATION
-    localparam logic [31:0] CsrId = { oclib_pkg::CsrIdChipMon,
-                                      ChipMonType, 4'd0 };
+    localparam logic [7:0] ChipMonType = 8'd0; // "NONE" IMPLEMENTATION
+    localparam logic [31:0] CsrId = { oclib_pkg::CsrIdChipMon, ChipMonType, 8'd0 };
 
     logic [0:NumCsr-1] [31:0] csrOut;
     logic [0:NumCsr-1] [31:0] csrIn;
@@ -284,6 +285,7 @@ module oc_chipmon #(
     assign csrFb = '0;
   end // !if (CsrEnable)
 
-`endif // !`ifdef OC_LIBRARY_ULTRASCALE_PLUS
+  // OC_LIBRARY_BEHAVIORAL
+`endif
 
 endmodule // oc_chipmon

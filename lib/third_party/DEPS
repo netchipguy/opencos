@@ -1,0 +1,22 @@
+
+ocext_axi_axil_adapter:
+        ocext_axi_axil_adapter.sv
+        ocext_axi_axil_adapter_rd
+        ocext_axi_axil_adapter_wr
+
+ocext_axi_axil_adapter_rd:
+        ocext_axi_axil_adapter_rd.sv
+
+ocext_axi_axil_adapter_wr:
+        ocext_axi_axil_adapter_wr.sv
+
+ocext_axil_interconnect:
+        ocext_axil_interconnect.sv
+        ocext_arbiter
+
+ocext_arbiter:
+        ocext_arbiter.sv
+        ocext_priority_encoder
+
+ocext_priority_encoder:
+        ocext_priority_encoder.sv

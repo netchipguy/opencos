@@ -54,6 +54,7 @@ module oclib_csr_to_axil
             axil.awvalid <= 1'b1;
             axil.wvalid <= 1'b1;
             axil.awaddr <= csr.address[AddressWidth-1:0];
+            axil.awprot <= 3'd0;
             axil.wdata <= csr.wdata[DataWidth-1:0];
             axil.wstrb <= {DataWidth/8{1'b1}};
             state <= StWrite1;
@@ -61,8 +62,10 @@ module oclib_csr_to_axil
           else if (csr.read && actualCsrSelect) begin
             axil.arvalid <= 1'b1;
             axil.araddr <= csr.address[AddressWidth-1:0];
+            axil.arprot <= 3'd0;
             state <= StRead1;
           end
+          csrFb.rdata <= '0; // we clear state
         end // StIdle
 
         StWrite1 : begin

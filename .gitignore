@@ -8,6 +8,8 @@ oc_test.*.log
 vivado*.jou
 vivado*.log
 vivado_pid*.str
+xelab.log
+xelab.pb
 
 # Questa junk
 qrun.log

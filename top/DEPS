@@ -2,7 +2,9 @@
 oc_cos:
         oc_cos.sv
         oc_uart_control
+        oc_axil_control
         oc_chip_status
+        oc_pll
         oc_chipmon
         oc_iic
         oc_led
@@ -10,17 +12,45 @@ oc_cos:
         oc_fan
         oc_protect
         oc_dummy
+        oc_pcie
         ../lib/oclib_reset
         ../lib/oclib_csr_tree_splitter
+        ../lib/oclib_bc_mux
+        ../lib/oclib_axil_mux
+        ../lib/oclib_csr_adapter
+        ../lib/oclib_memory_bist
+        ../lib/oclib_axim_ram
+
+oc_bc_control:
+        oc_bc_control.sv
+        ../lib/oclib_synchronizer
+        ../lib/oclib_bc_bidi_adapter
 
 oc_uart_control:
         oc_uart_control.sv
+        oc_bc_control
+        ../lib/oclib_synchronizer
         ../lib/oclib_uart
-        ../lib/oclib_pulse_stretcher
+
+oc_axil_control:
+        oc_axil_control.sv
+        oc_bc_control
+        ../lib/oclib_synchronizer
+        ../lib/oclib_axil_demux
+        ../lib/oclib_axil_to_bc
+        ../lib/oclib_fifo
+        ../lib/oclib_async_fifo
 
 oc_chip_status:
         oc_chip_status.sv
         ../lib/oclib_synchronizer
+
+oc_pll:
+        oc_pll.sv
+        ../lib/oclib_clock_control
+        ../lib/oclib_module_reset
+        ../lib/oclib_csr_adapter
+        ../lib/oclib_csr_array
 
 oc_chipmon:
         oc_chipmon.sv
@@ -63,3 +93,13 @@ oc_dummy:
         ../lib/oclib_dummy_logic
         ../lib/oclib_module_reset
         ../lib/oclib_csr_array
+
+oc_pcie: # eda_multi ignore synth
+        oc_pcie.sv
+        ../lib/oclib_module_reset
+        ../lib/oclib_csr_adapter
+        ../lib/oclib_csr_array
+        ../lib/oclib_axim_to_axil
+        ../sim/ocsim_clock
+        ../sim/ocsim_reset
+        ../sim/ocsim_axim_source

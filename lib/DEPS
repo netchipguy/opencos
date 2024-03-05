@@ -72,6 +72,10 @@ oclib_bc_bidi_adapter:
         oclib_async_serial_to_ready_valid
         oclib_synchronizer
 
+oclib_bc_mux:
+        oclib_bc_mux.sv
+        oclib_module_reset
+
 oclib_bc_tree_splitter:
         oclib_bc_tree_splitter.sv
         oclib_module_reset
@@ -91,6 +95,11 @@ oclib_bc_bidi_to_words:
         oclib_word_to_bc
         oclib_module_reset
 
+oclib_axil_to_bc:
+        oclib_axil_to_bc.sv
+        oclib_module_reset
+        oclib_fifo
+
 oclib_bc_to_csr:
         oclib_bc_to_csr.sv
         oclib_bc_bidi_to_words
@@ -107,6 +116,7 @@ oclib_csr_adapter:
         oclib_csr_to_drp
         oclib_csr_to_apb
         oclib_csr_to_axil
+        oclib_csr_synchronizer
         oclib_module_reset
         oclib_synchronizer
 
@@ -157,8 +167,41 @@ oclib_csr_to_axil:
         oclib_module_reset
         oclib_synchronizer
 
+oclib_ram1r1w:
+        oclib_ram1r1w.sv
+
+oclib_axim_ram:
+        oclib_axim_ram.sv
+        oclib_ram1r1w
+        oclib_fifo
+        oclib_pipeline
+        oclib_module_reset
+
+oclib_axim_fifo:
+        oclib_axim_fifo.sv
+        oclib_fifo
+        oclib_module_reset
+
+oclib_axim_pipeline:
+        oclib_axim_pipeline.sv
+        oclib_ready_valid_pipeline
+        oclib_module_reset
+
 oclib_fifo:
         oclib_fifo.sv
+
+oclib_async_fifo:
+        oclib_async_fifo.sv
+        oclib_module_reset
+        oclib_synchronizer
+        oclib_bin_to_gray
+        oclib_gray_to_bin
+
+oclib_bin_to_gray:
+        oclib_bin_to_gray.sv
+
+oclib_gray_to_bin:
+        oclib_gray_to_bin.sv
 
 oclib_xxtea:
         oclib_xxtea.sv
@@ -169,3 +212,38 @@ oclib_fpga_serial:
 oclib_dummy_logic:
         oclib_dummy_logic.sv
         oclib_module_reset
+
+oclib_clock_control:
+        oclib_clock_control.sv
+        oclib_reset
+        oclib_synchronizer
+
+oclib_lfsr:
+        oclib_lfsr.sv
+
+oclib_averager:
+        oclib_averager.sv
+
+oclib_memory_bist:
+        oclib_pkg
+        oclib_memory_bist_pkg
+        oclib_memory_bist.sv
+        oclib_lfsr
+        oclib_averager
+        oclib_fifo
+        oclib_axim_fifo
+        oclib_axim_pipeline
+        oclib_ready_valid_pipeline
+        oclib_module_reset
+        oclib_pipeline
+        oclib_synchronizer
+
+oclib_axim_to_axil:
+        oclib_pkg
+        oclib_axim_to_axil.sv
+        third_party/ocext_axi_axil_adapter
+
+oclib_axil_mux:
+        oclib_pkg
+        oclib_axil_mux.sv
+        third_party/ocext_axil_interconnect

@@ -57,7 +57,7 @@ module oclib_uart_rx
    BaudCtrHalfTC:     *                       *                      *
    BitCtr:  |  7    7     7    7   |   0   0     0    0    0     0   0    0   0
 
-   3) We assert rxValid as soon as we've latched D7, and we assert it when we see
+   3) We assert rxValid as soon as we've latched D7, and we deassert it when we see
    rxReady. We are tolerant with rxReady taking a while, and only consider it an
    error if we need to reassert it.  This enables back-to-back connection to a
    oclib_uart_tx which will take one less baud time to give ready.

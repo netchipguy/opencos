@@ -8,6 +8,7 @@ import os
 import time
 import atexit
 import shutil
+import traceback
 
 progname = "UNKNOWN"
 progname_in_message = True
@@ -75,6 +76,7 @@ logfile_is_forced = False
 def process_token(arg):
     global logfile_is_next_arg
     global logfile_is_forced
+    global debug_level
     if logfile_is_next_arg:
         start_log(arg, force=logfile_is_forced)
         logfile_is_next_arg = False
@@ -201,15 +203,17 @@ def print_yellow(text, end='\n'):
     print_post(text, end)
 
 def set_debug_level(level):
+    global debug_level
     debug_level = level
     args['debug'] = (level > 0)
     args['verbose'] = (level > 1)
+    info(f"Set debug level to {debug_level}")
 
 # the <<d>> stuff is because we change progname after this is read in.  if we instead infer progname or
 # get it passed somehow, we can avoid this ugliness / performance impact (lots of calls to debug happen)
 def debug(text, level=1, start='<<d>>', end='\n'):
     if start=='<<d>>': start = f"DEBUG: " + (f"[{progname}] " if progname_in_message else "")
-    if args['debug'] and ((level==1) or args['verbose'] or (debug_level >= level)):
+    if args['debug'] and (((level==1) and args['verbose']) or (debug_level >= level)):
         print_yellow(f"{start}{text}", end=end)
 
 def info(text, start='<<d>>', end='\n'):
@@ -226,7 +230,9 @@ def error(text, error_code=-1, do_exit=True, start='<<d>>', end='\n'):
     if start=='<<d>>': start = f"ERROR: " + (f"[{progname}] " if progname_in_message else "")
     args['errors'] += 1
     print_red(f"{start}{text}", end=end)
-    if do_exit: exit(error_code)
+    if do_exit:
+        if args['debug']: print(traceback.print_stack())
+        exit(error_code)
 
 def exit(error_code=0):
     info(f"Exiting with {args['warnings']} warnings, {args['errors']} errors")

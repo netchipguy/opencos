@@ -66,16 +66,21 @@ package oclib_pkg;
   // this is generally the default that is assumed, esp interfacing with other blocks.  The async
   // versions are really for transport of the byte stream between blocks, chips, etc.
 
-  typedef struct packed {
-    logic [7:0]  data;
-    logic        valid;
-    logic        ready;
-  } bc_8b_bidi_s;
+  // The "dummy" stuff is because we compare types all over the place.  Broken tools don't compare
+  // types consistently, so for those we compare the width of the structs, and hence the widths must
+  // be unique.  The "dummy" signals will be compiled out.  We only "uniquify" the forward path, not
+  // the *Fb, since we only do comparisons on forward path.
 
   typedef struct packed {
     logic [7:0]  data;
     logic        valid;
-  } bc_8b_s;
+    logic        ready;
+  } bc_8b_bidi_s; // 10 bit
+
+  typedef struct packed {
+    logic [7:0]  data;
+    logic        valid;
+  } bc_8b_s; // 9 bit
 
   typedef struct packed {
     logic        ready;
@@ -90,15 +95,17 @@ package oclib_pkg;
   // Source sees ACK de-assert, and knows (a) slave got the data, (b) it can start a new transaction
 
   typedef struct packed {
+    `OC_IFDEF_INCLUDE(OC_TOOL_BROKEN_TYPE_COMPARISON, logic[1:0]dummy; )
     logic [7:0]  data;
     logic        req;
     logic        ack;
-  } bc_async_8b_bidi_s;
+  } bc_async_8b_bidi_s; // 10 -> 12 bit
 
   typedef struct packed {
+    `OC_IFDEF_INCLUDE(OC_TOOL_BROKEN_TYPE_COMPARISON, logic[1:0]dummy; )
     logic [7:0]  data;
     logic        req;
-  } bc_async_8b_s;
+  } bc_async_8b_s; // 9 -> 11 bit
 
   typedef struct packed {
     logic        ack;
@@ -113,11 +120,11 @@ package oclib_pkg;
   typedef struct packed {
     logic [1:0]  data;
     logic        ack;
-  } bc_async_1b_bidi_s;
+  } bc_async_1b_bidi_s; // 3 bit
 
   typedef struct packed {
     logic [1:0]  data;
-  } bc_async_1b_s;
+  } bc_async_1b_s; // 2 bit
 
   typedef struct packed {
     logic        ack;
@@ -149,6 +156,8 @@ package oclib_pkg;
   localparam integer              SpaceIdBits = 4; // 2X this (space+id) must be multiple of 8
 
   localparam [SpaceIdBits-1:0]    BcSpaceIdAny = {(SpaceIdBits){1'b1}};
+
+  // Like the BC structs, we need these to have unique widths in forward path.  So far they all do.
 
   // SIMPLE PARALLEL CSR PROTOCOL
 
@@ -259,8 +268,10 @@ package oclib_pkg;
 
   typedef struct packed {
     logic [31:0] awaddr;
+    logic [2:0]  awprot;
     logic        awvalid;
     logic [31:0] araddr;
+    logic [2:0]  arprot;
     logic        arvalid;
     logic [31:0] wdata;
     logic [3:0]  wstrb;

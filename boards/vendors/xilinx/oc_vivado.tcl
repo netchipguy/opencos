@@ -97,10 +97,13 @@ proc oc_auto_scoped_xdc {} {
 # expected to be called by the chip_constraints.tcl master constraint file
 proc oc_auto_attr_constraints {} {
 
+    puts "STARTING AUTO_ATTR_CONSTRAINTS"
+
     # this is an alternative to the scoped XDC, and could be improved by moving this into an oc_pll.tcl perhaps,
     # to emulate the modularity of scoped XDC, while retaining full power of TCL.  This is nice because TCL can
     # do things like query the design via attributes (clock freq, number of clocks, enablement of features) and
     # then adjust the constraints accordingly
+    oc_auto_oclib_reset
     oc_auto_oc_pll
     oc_auto_oc_cmac
 
@@ -108,6 +111,8 @@ proc oc_auto_attr_constraints {} {
     # than the per-module "scoped" XDC (or even TCL) and is the way we'll support false paths, multicycle paths, etc, in libraries
     # and user logic.  It's nice that the constraint is applied right in the RTL. 
     oc_auto_attr_max_skew_ns
+
+    puts "FINISHED AUTO_ATTR_CONSTRAINTS"
 }
 
 # this will create default max_paths of 20ns between OC-managed clocks.  This assumes that all clocks are basically async
@@ -131,6 +136,16 @@ proc oc_auto_max_delay { } {
 
 # *******
 # the reminaing functions in the oc_auto_* group are not expected to be called directly from chip_constraints.tcl master constraint file
+
+# add constraints for oclib_reset(s)
+proc oc_auto_oclib_reset {} {
+    set instances [oc_get_instances oclib_reset]
+    foreach inst $instances {
+        puts "OC_AUTO_OCLIB_RESET: Found oclib_reset $inst"
+        # we have an async path to the CLR pin of these flops.  May need to make this -quiet if the flop doesn't exit?
+        set_max_delay -to [get_pins $inst/startPipe_reg[*]/CLR] 20.0
+    }
+}
 
 # add constraints for oc_pll(s)
 proc oc_auto_oc_pll {} {
@@ -319,18 +334,34 @@ proc oc_set_project_defines { define_string { fileset "sources_1" } } {
     set_property verilog_define $define_string [get_fileset $fileset]
 }
 
-proc oc_set_project_define { name { value "" }} {
+proc oc_set_design_define { name { value "" }} {
     set new_defines [ oc_set_define_in_string [oc_get_project_defines [current_fileset] ] $name $value ]
+    oc_set_project_defines $new_defines [current_filese] 
+}
+
+proc oc_clear_design_define { name } {
+    set new_defines [ oc_clear_define_in_string [oc_get_project_defines [current_fileset] ] $name ]
     oc_set_project_defines $new_defines [current_fileset]
+}
+
+proc oc_set_sim_define { name { value "" }} {
     set new_defines [ oc_set_define_in_string [oc_get_project_defines [current_fileset -simset] ] $name $value ]
     oc_set_project_defines $new_defines [current_fileset -simset] 
 }
 
-proc oc_clear_project_define { name } {
-    set new_defines [ oc_clear_define_in_string [oc_get_project_defines [current_fileset]] $name ]
-    oc_set_project_defines $new_defines [current_fileset]
-    set new_defines [ oc_clear_define_in_string [oc_get_project_defines [current_fileset -simset]] $name ]
+proc oc_clear_sim_define { name } {
+    set new_defines [ oc_clear_define_in_string [oc_get_project_defines [current_fileset -simset] ] $name ]
     oc_set_project_defines $new_defines [current_fileset -simset]
+}
+
+proc oc_set_project_define { name { value "" }} {
+    oc_set_design_define $name $value
+    oc_set_sim_define $name $value
+}
+
+proc oc_clear_project_define { name } {
+    oc_clear_design_define $name
+    oc_clear_sim_define $name
 }
 
 # *******************************************
@@ -1006,6 +1037,18 @@ if { [current_project -quiet] == "" } {
     oc_hook_vivado
     # similar story, since we don't want to lose user configuration just because the script is reloaded
     oc_multirun_init
+}
+
+
+# this is messy but older versions of vivado dont have this command
+if { ! [llength [info commands wait_on_runs]] } {
+    proc wait_on_runs { runs } {
+        puts "OC_VIVADO: custom implementation of wait_on_runs for older Vivado"
+        foreach r $runs {
+            puts "OC_VIVADO: waiting on run $r ..."
+            wait_on_run $r
+        }
+    }
 }
 
 puts "OC_VIVADO.TCL: DONE"

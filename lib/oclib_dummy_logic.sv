@@ -56,17 +56,17 @@ module oclib_dummy_pipeline
   logic [DatapathWidth-1:0]         pipe_in [PipeStages];
   logic [DatapathWidth-1:0]         pipe_out [PipeStages];
 
-  for (genvar p=0; p<PipeStages; p++) begin : pipe
+  for (genvar s=0; s<PipeStages; s++) begin : stage
 
     always_ff @(posedge clock) begin
-      pipe_in[p] <= ((p==0) ? in : pipe_out[(p?p:1)-1]);
+      pipe_in[s] <= ((s==0) ? in : pipe_out[(s?s:1)-1]);
     end
 
     oclib_dummy_combo_stage #(.DatapathWidth(DatapathWidth),
                               .LogicLevels(LogicLevels),
                               .LutInputs(LutInputs),
-                              .Seed(Seed+(123*p)))
-    uCOMBO_STAGE (.in(pipe_in[p]), .out(pipe_out[p]));
+                              .Seed(Seed+(123*s)))
+    uCOMBO_STAGE (.in(pipe_in[s]), .out(pipe_out[s]));
 
   end
 
@@ -92,25 +92,17 @@ module oclib_dummy_combo_stage
   logic [DatapathWidth-1:0]         level_in [LogicLevels];
   logic [DatapathWidth-1:0]         level_out [LogicLevels];
 
-  for (genvar level=0; level<LogicLevels; level++) begin : level
-    assign level_in[level] = ((level == 0) ? in : level_out[(level?level:1)-1]);
+  for (genvar l=0; l<LogicLevels; l++) begin : level
+    assign level_in[l] = ((l == 0) ? in : level_out[(l?l:1)-1]);
     for (genvar b=0; b<DatapathWidth; b++) begin : lut
       logic [LutInputs-1:0] lut_in;
       for (genvar i=0; i<LutInputs; i++) begin
         // grab Inputs bits from level_in, swizzling them
-        assign lut_in[i] = level_in[level][ (b + i + level) % DatapathWidth ];
-
-        // level 1 bits 0 and 16, seed=1
-        // bit 0:
-        // lut_in[ 0] = level_in[1][ 0 + (0)]
-        // lut_in[ 1] = level_in[1][ 0 + (1*2)]
-        // bit 16:
-        // lut_in[ 0] = level_in[1][ 16 + (0*2)]
-        // lut_in[ 1] = level_in[1][ 16 + (1*2)]
+        assign lut_in[i] = level_in[l][ (b + i + l) % DatapathWidth ];
       end
-      oclib_dummy_logic_lut #(.Seed(Seed + level + b),
+      oclib_dummy_logic_lut #(.Seed(Seed + l + b),
                               .Inputs(LutInputs) )
-      uLUT (.in(lut_in), .out(level_out[level][b]));
+      uLUT (.in(lut_in), .out(level_out[l][b]));
     end
   end
 
