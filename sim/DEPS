@@ -23,5 +23,8 @@ ocsim_axil_source:
 
 ocsim_axim_memory:
         ocsim_axim_memory.sv
-        ../lib/oclib_fifo
+        ../lib/oclib_axim_fifo
         ../lib/oclib_pipeline
+
+ocsim_axim_source:
+        ocsim_axim_source.sv

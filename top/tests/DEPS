@@ -53,10 +53,11 @@ oc_cos_test:
 oc_cos_mbist_32_test:
         --top=oc_cos_test
         oc_cos_test_base
+        +define+OC_USER_CSR_COUNT=1
         +define+OC_MEMORY_BIST_PORT_COUNT=32
 
-oc_cos_mbist_4x32_test:
+oc_cos_mbist_4x32_test: # eda_multi ignore * questa
         --top=oc_cos_test
         oc_cos_test_base
-        +define+OC_USER_CSR_COUNT=4 # for now we have fixed one
+        +define+OC_USER_CSR_COUNT=4
         +define+OC_MEMORY_BIST_PORT_COUNT=32

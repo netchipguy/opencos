@@ -1,7 +1,9 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
-#eda_multi ignore synth
+#eda_multi ignore synth        # we don't try to synth these outside the project context, too much IP
+#eda_multi ignore elab questa  # we can't elab this with Questa yet, either
+#eda_multi ignore sim questa   # we can't sim this with Questa yet, either
 
 oc_chip_harness:
         oc_chip_harness.sv

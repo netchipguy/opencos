@@ -106,12 +106,13 @@ module ocsim_uart
     end
   end
 
+  logic [7:0] temp8;
   always begin
     if (rxQ.size() && expectQ.size()) begin
       if (rxQ[0] === expectQ[0]) begin
         if (Verbose) $display("%t %m: Matched expected: %02x (%s)", $realtime, rxQ[0], ocsim_pkg::CharToString(rxQ[0]));
-        rxQ.pop_front();
-        expectQ.pop_front();
+        temp8 = rxQ.pop_front(); // using temp8 avoids warnings
+        temp8 = expectQ.pop_front();
       end
       else begin
         $display("%t %m: ERROR: Received byte: %02x (%s) when expecting: %02x (%s)", $realtime,

@@ -84,8 +84,8 @@ module oclib_memory_bist #(
   // *** pipeline CFG bus across from PORT[0] to [N]
 
   if (AximPorts>1) begin
-    always_ff @(posedge clockAxim) begin
-      for (int p=1; p<AximPorts; p++) begin
+    for (genvar p=1; p<AximPorts; p++) begin
+      always_ff @(posedge clockAxim) begin
         port_cfg[p] <= port_cfg[p-1];
       end
     end
@@ -101,9 +101,9 @@ module oclib_memory_bist #(
                              .AximAddressWidth(AximAddressWidth), .AximDataWidth(AximDataWidth),
                              .AximPortRetimers(AximPortRetimers), .AximPortFifoDepth(AximPortFifoDepth),
                              .ConfigPipeStages(ConfigPipeStages), .StatusPipeStages(StatusPipeStages))
-    uAXIM (clockAxim, resetAximPort[p],
-           port_cfg[p], port_sts[p],
-           axim[p], aximFb[p] );
+    uAXIM (.clockAxim(clockAxim), .resetAxim(resetAximPort[p]),
+           .cfg(port_cfg[p]), .sts(port_sts[p]),
+           .axim(axim[p]), .aximFb(aximFb[p]) );
   end
 
   // *** pipeline STS bus back from PORT[N] .. [0]
@@ -119,8 +119,10 @@ module oclib_memory_bist #(
     // combinationally combine the engine status with the upstream status, which both come from flops, to go into output flop
     always_comb begin
       port_sts_local = port_sts[p];
+      port_sts_in = '0;
+      port_sts_out = '0;
       if (p == (AximPorts-1)) begin
-        port_sts_in = '0; // default inputs to 0 for highest numbered port, there is no "from upstream"
+        // default inputs to 0 for highest numbered port, there is no "from upstream"
         port_sts_in.done = 1'b1; // except for done bit, pretend that's asserted :)
       end
       else begin

@@ -385,11 +385,13 @@ module oc_pcie
         .csrRead(), .csrWrite(),
         .csrOut(), .csrIn('0));
 
+  // if these are defined inside the "if" below, Questa doesn't like it, not sure why
+  localparam type AxiBridgeMasterType   = `OC_VAL_ASDEFINED_ELSE(OC_IP_PCIE_M_AXIB_TYPE,oclib_pkg::axi4m_64_s);
+  localparam type AxiBridgeMasterFbType = `OC_VAL_ASDEFINED_ELSE(OC_IP_PCIE_M_AXIB_FB_TYPE,oclib_pkg::axi4m_64_fb_s);
+
   // we should match the hierarchy names for behavioral and vendor library cases, so testbench stays clean
   if (`OC_VAL_IFDEF(SIMULATION)) begin : sim_model
 
-    localparam type AxiBridgeMasterType   = `OC_VAL_ASDEFINED_ELSE(OC_IP_PCIE_M_AXIB_TYPE,oclib_pkg::axi4m_64_s);
-    localparam type AxiBridgeMasterFbType = `OC_VAL_ASDEFINED_ELSE(OC_IP_PCIE_M_AXIB_FB_TYPE,oclib_pkg::axi4m_64_fb_s);
     AxiBridgeMasterType ipAxiBridgeMaster;
     AxiBridgeMasterFbType ipAxiBridgeMasterFb;
 

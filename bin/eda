@@ -19,6 +19,7 @@ class Command:
     args = {
         "keep" : False,
         "force" : False,
+        "fake" : False,
         "eda-dir" : "eda.work",
         "job-name" : "",
         "work-dir" : "",
@@ -61,7 +62,10 @@ class Command:
             util.info("exec: %s (in %s)" % (' '.join(command_list), work_dir))
         original_cwd = util.getcwd()
         os.chdir(work_dir)
-        if not background:
+        if self.args['fake']:
+            util.info(f"FAKE: would have called os.system({' '.join(command_list)})")
+            return "", "", 0
+        elif not background:
             stdout = "" # these will be send direct to screen
             stderr = ""
             util.debug(f"About to call os.system({' '.join(command_list)})")
@@ -583,7 +587,7 @@ class CommandParallelWorker(threading.Thread):
                 self.work_queue.task_done()
                 _threads_done += 1
 
-tools_loaded = []
+tools_loaded = {}
 
 class CommandParallel(Command):
     def __init__(self, config, command_name):
@@ -834,16 +838,25 @@ class CommandMulti(CommandParallel):
                 for line in f:
                     line_number += 1
                     # look for a pragma before clearing comments
-                    m = re.match(r'^([^\#]*)\#\s*eda_multi\s+ignore\s+(\S*).*$', line)
+                    m = re.match(r'^([^\#]*)\#\s*eda_multi\s+ignore\s+([^\#\s]*)\s*([^\#\s]*)?.*$', line)
                     if m:
                         ignore_target = m.group(1)
                         ignore_command = m.group(2)
+                        ignore_tool = m.group(3)
                         if (ignore_command == command) or (ignore_command == "*"):
-                            if ignore_target == "":
+                            if ignore_tool != None and ignore_tool != "":
+                                if which_tool(command) == ignore_tool:
+                                    if ignore_target == "":
+                                        util.debug(f"RESOLVE_TARGET L{level}: ignoring file, tool {ignore_tool}, line: {line}")
+                                        break
+                                    else:
+                                        util.debug(f"RESOLVE_TARGET L{level}: due to using tool {ignore_tool}, ignoring line: {line}")
+                                        continue
+                            elif ignore_target == "":
                                 util.debug(f"RESOLVE_TARGET L{level}: ignoring whole file {deps_file} due to {line} @ {line_number}")
                                 break
                             else:
-                                util.debug(f"RESOLVE_TARGET L{level}: ignoring one line: {line}")
+                                util.debug(f"RESOLVE_TARGET L{level}: ignoring line: {line}")
                                 continue
 
                     # clear out comments
@@ -910,6 +923,9 @@ class CommandMulti(CommandParallel):
                 if (command == ""):
                     command = token
                     continue
+            if token == "--fake":
+                self.args['fake'] = True
+                continue
             if token == "--parallel":
                 v = tokens.pop(0)
                 if ((not v.isdigit()) or (int(v) < 1) or (int(v) > 256)):
@@ -1111,13 +1127,13 @@ class CommandWaves(CommandDesign):
             if (len(wave_dirs) == 0) and os.path.isdir(self.args['eda-dir']):
                 wave_dirs.append(self.args['eda-dir'])
             if (len(wave_dirs) == 0):
-                wave_dirs.append(self.args['.'])
+                wave_dirs.append('.')
             all_files = []
             for d in wave_dirs:
                 util.info(f"Looking for wavedumps below: {d}")
                 for root, dirs, files in os.walk(d):
                     for f in files:
-                        for e in [ '.wdb', '.vcd' ]:
+                        for e in [ '.wdb', '.vcd', '.wlf' ]:
                             if f.endswith(e):
                                 util.info(f"Found wave file: {os.path.join(root,f)}")
                                 all_files.append(os.path.join(root,f))
@@ -1131,13 +1147,39 @@ class CommandWaves(CommandDesign):
 
         wave_file = os.path.abspath(wave_file)
         util.info(f"decided on opening: {wave_file}")
-        tcl_name = wave_file + '.waves.tcl'
-        with open( tcl_name,'w') as fo :
-            print( 'current_fileset', file=fo)
-            print( 'open_wave_database %s' % wave_file, file=fo)
 
-        command_list = ['vivado', '-source', tcl_name]
-        self.exec(os.path.dirname(wave_file), command_list)
+        if wave_file.endswith('.wdb'):
+            if tools_loaded['vivado']:
+                tcl_name = wave_file + '.waves.tcl'
+                with open( tcl_name,'w') as fo :
+                    print( 'current_fileset', file=fo)
+                    print( 'open_wave_database %s' % wave_file, file=fo)
+                command_list = ['vivado', '-source', tcl_name]
+                self.exec(os.path.dirname(wave_file), command_list)
+            else:
+                util.error(f"Don't know how to open {wave_file} without Vivado")
+        elif wave_file.endswith('.wlf'):
+            if tools_loaded['questa']:
+                command_list = ['vsim', wave_file]
+                self.exec(os.path.dirname(wave_file), command_list)
+            else:
+                util.error(f"Don't know how to open {wave_file} without Questa")
+        elif wave_file.endswith('.vcd'):
+            if tools_loaded['questa']:
+                command_list = ['vsim', wave_file]
+                self.exec(os.path.dirname(wave_file), command_list)
+            elif tools_loaded['vivado']:
+                # I don't think this works, this is a placeholder, I'm sure Vivado can open a VCD
+                # Also this would be a great place to start adding some open source (GTKWAVE) support...
+                tcl_name = wave_file + '.waves.tcl'
+                with open( tcl_name,'w') as fo :
+                    print( 'current_fileset', file=fo)
+                    print( 'open_wave_database %s' % wave_file, file=fo)
+                command_list = ['vivado', '-source', tcl_name]
+                self.exec(os.path.dirname(wave_file), command_list)
+            else:
+                util.error(f"Don't know how to open {wave_file} without Vivado or Questa")
+
 
 class CommandUpload(CommandDesign):
     def __init__(self, config):
@@ -1161,7 +1203,8 @@ class ToolVivado:
         self.vivado_year = None
         self.vivado_release = None
         self.args['xilinx'] = False
-        self.args['part'] = "xcu200-fsgd2104-2-e"
+        self.args['part'] = 'xcu200-fsgd2104-2-e'
+        self.args['tool'] = 'vivado'
 
     def get_versions(self):
         if self.vivado_year != None:
@@ -1622,21 +1665,22 @@ class ToolQuesta:
         self.questa_major = None
         self.questa_minor = None
         self.args['xilinx'] = False
-        self.args['part'] = "xcu200-fsgd2104-2-e"
+        self.args['part'] = 'xcu200-fsgd2104-2-e'
+        self.args['tool'] = 'questa'
 
     def get_versions(self):
         if self.questa_major != None:
             return
         qrun_path = shutil.which('qrun')
         if qrun_path == None:
-            util.error("qrun not in path, need to setup (i.e. source /opt/intelFPGA_pro/23.4/settings64.sh")
-        util.debug("qrun_path = %s" % qrun_path)
+            util.error(f"qrun not in path, need to setup (i.e. source /opt/intelFPGA_pro/23.4/settings64.sh")
+        util.debug(f"qrun_path = %s" % qrun_path)
         m = re.search(r'(\d+)\.(\d+)', qrun_path)
         if m:
-            self.questa_minor = int(m.group(1))
-            self.questa_major = int(m.group(2))
+            self.questa_major = int(m.group(1))
+            self.questa_minor = int(m.group(2))
             return
-        util.error("Questa path doesn't specificy version, expecting (d+.d+)")
+        util.error(f"Questa path doesn't specificy version, expecting (d+.d+)")
 
     def set_tool_defines(self):
         # Will only be called from an object which also inherits from CommandDesign, i.e. has self.defines
@@ -1672,10 +1716,9 @@ class CommandSimQuesta(CommandSim, ToolQuesta):
         # defines
         for key in self.defines.keys():
             value = self.defines[key]
-            if value == None:
-                command_list += [ f"+define+{key}" ]
-            else:
-                command_list += [ f"\'+define+{key}={value}\'" ]
+            if value == None:   command_list += [ f"+define+{key}" ]
+            elif "\'" in value: command_list += [ f"\"+define+{key}={value}\"" ]
+            else:               command_list += [ f"\'+define+{key}={value}\'" ]
 
         # compile verilog
         for f in self.files_v:
@@ -1692,34 +1735,48 @@ class CommandSimQuesta(CommandSim, ToolQuesta):
 
         # misc options
         command_list += [ '-top', self.args['top'], '-timescale', '1ns/1ps', '-work', 'work.lib']
-        if self.args['gui'] and self.args['waves']: command_list += ['-debug', 'all']
-        elif self.args['gui']: command_list += ['-debug', 'typical']
-        elif self.args['waves']: command_list += ['-debug', 'wave']
+        command_list += [
+            # otherwise lots of warnings about defaulting to "var" which isn't LRM behavior, and we don't need it
+            '-svinputport=net',
+            #  Existing package 'xxxx_pkg' at line 9 will be overwritten.
+            '-suppress', 'vlog-2275',
+            #  Extra checking for conflict in always_comb and always_latch variables is done at vopt time
+            '-suppress', 'vlog-2583',
+            #  Missing connection for port 'xxxx' (The default port value will be used)
+            '-suppress', 'vopt-13159',
+            #  Too few port connections for 'uAW_FIFO'.  Expected 10, found 8
+            '-suppress', 'vopt-2685',
+            #  Missing connection for port 'almostEmpty' ... unfortunately same message for inputs and outputs... :(
+            '-note', 'vopt-2718',
+        ]
+        if self.args['gui']: command_list += ['-gui=interactive', '+acc', '-i']
+        elif self.args['waves']: command_list += ['+acc', '-c']
+        else: command_list += ['-c']
         if util.args['verbose']: command_list += ['-verbose']
         if self.args['xilinx']:
-            command_list += "-L xil_defaultlib -L unisims_ver -L unimacro_ver -L xpm -L secureip -L xilinx_vip".split(" ")
+            # this will need some work
+            util.error("THIS ISN'T GOING TO WORK, got --xilinx with Questa which isn't ready yet", do_exit=False)
+            # command_list += "-L xil_defaultlib -L unisims_ver -L unimacro_ver -L xpm -L secureip -L xilinx_vip".split(" ")
 
         # check if we're bailing out early
         if self.stop_after_compile:
             command_list += ['-elab', 'elab.output', '-do', '"quit"' ]
 
-        # execute snapshot
-        if self.args['gui']: command_list += ['-gui=interactive']
-        self.exec(self.args['work-dir'], command_list)
-
-        #temp
-        return
-
-        # create TCL -- move this up
+        # create TCL
         tcl_name = os.path.abspath(os.path.join(self.args['work-dir'], self.args['tcl-file']))
         with open( tcl_name, 'w' ) as fo:
             if self.args['waves']:
                 if self.args['waves-start']:
                     print("run %d ns" % self.args['waves-start'], file=fo)
-                print("log_wave -recursive *", file=fo)
+                print("add wave -r /*", file=fo)
             print("run -all", file=fo)
             if not self.args['gui']:
-                print("exit", file=fo)
+                print("quit", file=fo)
+        command_list += ['-do', tcl_name ]
+
+        # execute snapshot
+        self.exec(self.args['work-dir'], command_list)
+
 
 class CommandElabQuesta(CommandSimQuesta):
     def __init__(self, config):
@@ -1812,6 +1869,8 @@ def auto_tool_setup():
 
 def tool_setup(tool, quiet=False):
     global tools_loaded
+    if tool in tools_loaded:
+        util.warning(f"tool_setup: already setup for {tool}?")
     if tool == "vivado":
         config['command_handler']['elab'] = CommandElabVivado
         config['command_handler']['sim'] = CommandSimVivado
@@ -1828,7 +1887,14 @@ def tool_setup(tool, quiet=False):
         util.error(f"Don't know tool '{tool}'")
     if not quiet:
         util.info(f"Setup for tool: '{tool}'")
-    tools_loaded.append(tool)
+    tools_loaded[tool] = True
+
+def which_tool(command):
+    # returns which tool will be used for a command, given the current command_handlers
+    if not command in config['command_handler']:
+        util.error("which_tool called with invalid command?")
+    cobj = config['command_handler'][command](config)
+    return cobj.args['tool']
 
 def process_tokens(tokens):
     # this is the top level token processing function.  tokens can come from command line, setup file, or interactively.

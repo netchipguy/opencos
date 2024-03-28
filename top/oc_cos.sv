@@ -627,12 +627,12 @@ module oc_cos
 
   // for now we are just instantiating memory tester
 
-  for (genvar i=0; i<UserCsrCount; i++) begin : user_space
+  localparam type MemoryBistAximType = `OC_VAL_ASDEFINED_ELSE(OC_MEMORY_BIST_AXIM_TYPE, oclib_pkg::axi4m_256_s);
+  localparam type MemoryBistAximFbType = `OC_VAL_ASDEFINED_ELSE(OC_MEMORY_BIST_AXIM_FB_TYPE, oclib_pkg::axi4m_256_fb_s);
+  localparam int MemoryBistPortCount = `OC_VAL_ASDEFINED_ELSE(OC_MEMORY_BIST_PORT_COUNT,1);
+  localparam int MemoryBistMemoryBytes = `OC_VAL_ASDEFINED_ELSE(OC_MEMORY_BIST_RAM_BYTES,65536);
 
-    localparam type MemoryBistAximType = `OC_VAL_ASDEFINED_ELSE(OC_MEMORY_BIST_AXIM_TYPE, oclib_pkg::axi4m_256_s);
-    localparam type MemoryBistAximFbType = `OC_VAL_ASDEFINED_ELSE(OC_MEMORY_BIST_AXIM_FB_TYPE, oclib_pkg::axi4m_256_fb_s);
-    localparam int MemoryBistPortCount = `OC_VAL_ASDEFINED_ELSE(OC_MEMORY_BIST_PORT_COUNT,1);
-    localparam int MemoryBistMemoryBytes = `OC_VAL_ASDEFINED_ELSE(OC_MEMORY_BIST_RAM_BYTES,65536);
+  for (genvar i=0; i<UserCsrCount; i++) begin : user_space
 
     logic          clockAxim;
     logic          resetAxim;

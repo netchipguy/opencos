@@ -520,4 +520,14 @@ module oclib_memory_bist_test #(
         .axim(axim), .aximFb(aximFb)
         );
 
+//`define OCSIM_SIM_TIMEOUT_NS 100000
+
+`ifdef OCSIM_SIM_TIMEOUT_NS
+  initial begin
+    # (`OCSIM_SIM_TIMEOUT_NS * 1ns);
+    $display("%t %m: FINISH: OCSIM_SIM_TIMEOUT_NS=%0d", $realtime, `OCSIM_SIM_TIMEOUT_NS);
+    $finish;
+  end
+`endif
+
 endmodule // oclib_memory_bist_test

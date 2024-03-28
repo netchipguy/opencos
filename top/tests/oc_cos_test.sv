@@ -333,8 +333,8 @@ module oc_cos_test
     `OC_CONFIRM_PARAM_MISC   (PllAutoThrottle);
     `OC_CONFIRM_PARAM_MISC   (PllClockHz);
     `OC_CONFIRM_PARAM_INTEGER(ChipMonCount);
-    `OC_CONFIRM_PARAM_INTEGER(ChipMonCsrEnable);
-    `OC_CONFIRM_PARAM_INTEGER(ChipMonI2CEnable);
+    `OC_CONFIRM_PARAM_MISC   (ChipMonCsrEnable);
+    `OC_CONFIRM_PARAM_MISC   (ChipMonI2CEnable);
     `OC_CONFIRM_PARAM_INTEGER(IicCount);
     `OC_CONFIRM_PARAM_INTEGER(IicOffloadEnable);
     `OC_CONFIRM_PARAM_INTEGER(LedCount);
@@ -379,7 +379,14 @@ module oc_cos_test
   // TODO: can we get rid of the concept of "expect" and just block on receive, making it synchronous?  I can see expect for
   // high bandwidth AXI testing (DMA etc) but not for this control channel and UART stuff.
 
-`define AXIM_SOURCE `OC_COS . \pcie[0].uPCIE . \sim_model.uSIM_AXIM_SOURCE
+`ifdef OC_TOOL_VIVADO
+  `define AXIM_SOURCE `OC_COS . \pcie[0].uPCIE . \sim_model.uSIM_AXIM_SOURCE
+`else
+  `define AXIM_SOURCE `OC_COS .pcie[0].uPCIE.sim_model.uSIM_AXIM_SOURCE
+`endif
+
+  // if the above paths don't work, set this to at least be able to build design and see what paths SHOULD look like...
+  //`define SKIP_AXIM_SOURCE
 
   int userCsrCurrent = 0;
 
@@ -387,7 +394,7 @@ module oc_cos_test
     if (number==-1) number = userCsrCurrent;
     `OC_ASSERT(number < (`OC_COS . UserCsrCount));
     if (number == 0) begin
-      `AXIM_SOURCE.Write32(address, data);
+`ifndef SKIP_AXIM_SOURCE `AXIM_SOURCE.Write32(address, data); `endif
     end
     else begin
       TopCsrWrite(.block((`OC_COS . BlockFirstUserCsr) + number), .space(0), .address(address), .data(data));
@@ -398,7 +405,7 @@ module oc_cos_test
     if (number==-1) number = userCsrCurrent;
     `OC_ASSERT(number < (`OC_COS . UserCsrCount));
     if (number == 0) begin
-      `AXIM_SOURCE.ReadCheck32(address, data);
+`ifndef SKIP_AXIM_SOURCE `AXIM_SOURCE.ReadCheck32(address, data); `endif
     end
     else begin
       TopCsrReadCheck(.block(`OC_COS . BlockFirstUserCsr + number), .space(0), .address(address), .data(data), .mask(mask));
@@ -409,7 +416,7 @@ module oc_cos_test
     if (number==-1) number = userCsrCurrent;
     `OC_ASSERT(number < (`OC_COS . UserCsrCount));
     if (number == 0) begin
-      `AXIM_SOURCE.Read32(address, data);
+`ifndef SKIP_AXIM_SOURCE `AXIM_SOURCE.Read32(address, data); `endif
     end
     else begin
       TopCsrRead(.block(`OC_COS . BlockFirstUserCsr + number), .space(0), .address(address), .data(data));

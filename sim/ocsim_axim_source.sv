@@ -3,6 +3,7 @@
 
 `include "sim/ocsim_pkg.sv"
 `include "sim/ocsim_defines.vh"
+`include "lib/oclib_pkg.sv"
 `include "lib/oclib_defines.vh"
 
 module ocsim_axim_source
@@ -120,4 +121,3 @@ module ocsim_axim_source
   endtask // Read32
 
 endmodule // ocsim_axim_source
-
